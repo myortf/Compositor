@@ -223,7 +223,7 @@ extension EditorSession {
                 transform: original.transform, parentID: original.parentID.map { mapping[$0] ?? $0 },
                 isGroup: original.isGroup, opacity: original.opacity, blendMode: original.blendMode,
                 mask: original.mask, maskSourceID: original.maskSourceID.map { mapping[$0] ?? $0 },
-                adjustment: original.adjustment, shape: original.shape, effects: original.effects, text: original.text)
+                adjustment: original.adjustment, shape: original.shape, effects: original.effects, text: original.text, smartObject: original.smartObject)
         }
         document?.layers.insert(contentsOf: copies, at: index + 1)
         for original in originals where collapsedGroupIDs.contains(original.id) {

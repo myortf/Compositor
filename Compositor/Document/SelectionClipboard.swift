@@ -150,9 +150,8 @@ extension EditorSession {
             addPixelLayer(clip.image, at: clip.origin, name: nextLayerName(), editName: "Paste")
         } else if let external = NSImage(pasteboard: pasteboard)?.cgImage(forProposedRect: nil, context: nil, hints: nil),
                   let image = try? Self.sRGBCopy(of: external) {
-            let origin = CGPoint(x: floor((document.size.width - CGFloat(image.width)) / 2),
-                                 y: floor((document.size.height - CGFloat(image.height)) / 2))
-            addPixelLayer(image, at: origin, name: nextLayerName(), editName: "Paste")
+            let placed = placedTransform(for: CGSize(width: image.width, height: image.height))
+            addPixelLayer(image, at: placed.origin, size: placed.size, name: nextLayerName(), editName: "Paste")
         } else { NSSound.beep() }
     }
 
@@ -248,9 +247,10 @@ extension EditorSession {
 
     /// Inserts pixels as a new layer above the active one (inside its folder), all in one undo
     /// step. Pasting drops the selection, as in Photoshop; a drawn shape keeps it.
-    func addPixelLayer(_ image: CGImage, at origin: CGPoint, name: String, editName: String, dropsSelection: Bool = true, shape: LayerShape? = nil, text: LayerText? = nil) {
+    func addPixelLayer(_ image: CGImage, at origin: CGPoint, size: CGSize? = nil, name: String, editName: String, dropsSelection: Bool = true, shape: LayerShape? = nil, text: LayerText? = nil) {
         guard let document, let thumbnail = try? PixelInvert.thumbnail(of: image) else { return }
         var layer = ImageLayer(asset: ImportedImage(image: image, thumbnail: thumbnail, name: name), origin: origin)
+        if let size { layer.transform.size = size }
         layer.name = name
         layer.shape = shape
         layer.text = text

@@ -5,6 +5,19 @@ import UniformTypeIdentifiers
 
 @MainActor
 struct CropTests {
+    @Test func portraitAndLandscapeRatiosAreOffered() {
+        let session = EditorSession()
+        session.createDocument(width: 300, height: 200)
+        session.tool = .crop
+        for (choice, ratio) in [("3:2", 1.5), ("2:3", 2.0 / 3), ("5:4", 1.25), ("4:5", 0.8)] {
+            session.cropRatioChoice = choice
+            #expect(session.cropRatio == CGFloat(ratio))
+            session.changeCropRatio()
+            let rect = session.cropRect
+            #expect(rect.map { abs($0.width / $0.height - CGFloat(ratio)) < 0.02 } == true)
+        }
+    }
+
     @Test func dragGeometrySupportsReverseRatioMoveAndEveryHandle() {
         let rect = CropGeometry.create(from: CGPoint(x: 100, y: 100), to: CGPoint(x: 20, y: 60), ratio: 2)
         #expect(rect == CGRect(x: 20, y: 60, width: 80, height: 40))

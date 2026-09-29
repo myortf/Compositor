@@ -161,6 +161,9 @@ final class BrushStroke {
     private var clonePieces: [Int: (image: CGImage, placed: CGRect)] = [:]
     /// A Blur stroke: `clone` holds the layer blurred, painted in place through the tip.
     var isBlur = false
+    /// A Dodge or Burn stroke: `clone` holds the layer lightened or darkened, opaque, and is laid over the pixels
+    /// through the tip without touching their alpha. It works on a mask too.
+    var isToneStroke = false
     /// The clone sample replaces what's under the tip rather than drawing over it, so it can also clear pixels.
     var replacesWithClone = false
     /// The undo name, when the stroke's kind doesn't say it.
@@ -503,7 +506,7 @@ final class BrushStroke {
                     tile.context.concatenate(pixelToDocument)
                     tile.context.translateBy(x: tile.rect.minX, y: tile.rect.minY)
                 }
-                if let clone, !isMask || isBlur {
+                if let clone, !isMask || isBlur || isToneStroke {
                     // Clone Stamp: the sample, shifted by the source offset, painted through the coverage.
                     // Where the sample doesn't reach, there's nothing to paint.
                     if let piece = clonePiece(key, tile: tile.rect, clone: clone) {
@@ -517,6 +520,7 @@ final class BrushStroke {
                         context.translateBy(x: 0, y: -local.height)
                         context.setAlpha(settings.opacity)
                         if replacesWithClone { context.setBlendMode(.copy) }
+                        else if isToneStroke, !isMask { context.setBlendMode(.sourceAtop) }
                         context.interpolationQuality = .medium
                         // Into the space the sample lives in: the stroke's grid, or document coordinates.
                         context.translateBy(x: -tile.rect.minX, y: -tile.rect.minY)

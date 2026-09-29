@@ -4,7 +4,7 @@ struct BrushControls: View {
     @Bindable var session: EditorSession
     var body: some View {
         HStack(spacing: 12) {
-            Text(session.tool == .spotHealing ? "Spot Healing" : session.tool == .cloneStamp ? "Clone Stamp" : session.tool == .blur ? "Smear" : session.brushMode == .erase ? "Eraser" : "Brush").font(ToolHeaderStyle.titleFont)
+            Text(session.tool == .spotHealing ? "Spot Healing" : session.tool == .cloneStamp ? "Clone Stamp" : session.tool == .blur ? "Smear" : session.tool == .dodgeBurn ? "Dodge / Burn" : session.brushMode == .erase ? "Eraser" : "Brush").font(ToolHeaderStyle.titleFont)
             if session.tool == .brush {
                 Picker("Mode", selection: $session.brushMode) {
                     ForEach(BrushToolMode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
@@ -18,6 +18,18 @@ struct BrushControls: View {
                 }
                 .pickerStyle(.segmented).labelsHidden().fixedSize()
                 .help("Liquify pushes pixels · Blur softens · Smudge drags color along")
+            }
+            if session.tool == .dodgeBurn {
+                Picker("Mode", selection: $session.dodgeBurnMode) {
+                    ForEach(DodgeBurnMode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented).labelsHidden().fixedSize()
+                .help("Dodge lightens · Burn darkens (Tab switches)")
+                Picker("Range", selection: $session.dodgeBurnRange) {
+                    ForEach(DodgeBurnRange.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                }
+                .fixedSize()
+                .help("The tones the brush works on")
             }
             if session.tool == .spotHealing {
                 Picker("Type", selection: $session.spotHealingMode) {
@@ -56,7 +68,7 @@ struct BrushControls: View {
                 .arrowSteps(value: { Double(session.brushSettings.hardness * 100) },
                             change: { session.brushSettings.hardness = CGFloat(min(1, max(0, $0 / 100))) })
                 .unitSuffix("%")
-            Text(session.tool == .blur ? "Strength" : "Opacity")
+            Text(session.tool == .blur ? "Strength" : session.tool == .dodgeBurn ? "Exposure" : "Opacity")
                 .scrubbable(sensitivity: 0.01, value: $session.brushSettings.opacity, range: 0.01...1)
             Slider(value: $session.brushSettings.opacity, in: 0.01...1).frame(width: 100)
             TextField("Opacity", value: Binding<Double>(get: { Double(session.brushSettings.opacity * 100) },
@@ -100,7 +112,7 @@ struct BrushControls: View {
                     Text("Black · Hide").tag(false)
                     Text("White · Reveal").tag(true)
                 }.frame(width: 180)
-            } else if session.tool != .cloneStamp, session.tool != .blur {
+            } else if session.tool != .cloneStamp, session.tool != .blur, session.tool != .dodgeBurn {
                 // Same foreground color and Color Picker as the tool-rail swatch.
                 HStack(spacing: 6) {
                     Text("Color")

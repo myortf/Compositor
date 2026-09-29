@@ -91,15 +91,15 @@ struct CanvasDocument: Equatable {
 }
 
 enum NavigationTool: String, CaseIterable {
-    case move, marquee, lasso, wand, crop, brush, spotHealing, cloneStamp, blur, gradient, shape, type, eyedropper, hand, zoom
+    case move, marquee, lasso, wand, crop, brush, spotHealing, cloneStamp, blur, dodgeBurn, gradient, shape, type, eyedropper, hand, zoom
     /// No tool (A): nothing in the tool rail is selected and canvas clicks do nothing.
     case idle
     /// Tools that paint with the brush tip, sharing its size, hardness, opacity, and keys.
-    var isBrushTool: Bool { self == .brush || self == .spotHealing || self == .cloneStamp || self == .blur }
+    var isBrushTool: Bool { self == .brush || self == .spotHealing || self == .cloneStamp || self == .blur || self == .dodgeBurn }
     /// Tools that draw and edit selections, sharing modifiers, moving, and nudging.
     var isSelectionTool: Bool { self == .marquee || self == .lasso || self == .wand }
-    var symbol: String { self == .type ? "textformat" : self == .eyedropper ? "eyedropper" : self == .marquee ? "rectangle.dashed" : self == .lasso ? "lasso" : self == .wand ? "wand.and.stars" : self == .brush ? "paintbrush.pointed" : self == .spotHealing ? "bandage" : self == .cloneStamp ? "seal" : self == .blur ? "drop" : self == .gradient ? "square.bottomhalf.filled" : self == .shape ? "square.on.circle" : self == .crop ? "crop" : self == .move ? "arrow.up.left.and.arrow.down.right" : self == .hand ? "hand.draw" : "magnifyingglass" }
-    var label: String { self == .type ? "Type (T)" : self == .eyedropper ? "Eyedropper (I)" : self == .marquee ? "Marquee (M)" : self == .lasso ? "Lasso (L)" : self == .wand ? "Magic (W) · Tab switches Wand and Object" : self == .brush ? "Brush (B) · Eraser (E)" : self == .spotHealing ? "Spot Healing Brush (J)" : self == .cloneStamp ? "Clone Stamp (S) · Option-click sets the source" : self == .blur ? "Smear (R)" : self == .gradient ? "Gradient (G)" : self == .shape ? "Shape (U) · Shift-U switches Rectangle/Ellipse" : self == .crop ? "Crop (C)" : self == .move ? "Move / Transform (V)" : self == .hand ? "Hand (H)" : "Zoom (Z)" }
+    var symbol: String { self == .type ? "textformat" : self == .eyedropper ? "eyedropper" : self == .marquee ? "rectangle.dashed" : self == .lasso ? "lasso" : self == .wand ? "wand.and.stars" : self == .brush ? "paintbrush.pointed" : self == .spotHealing ? "bandage" : self == .cloneStamp ? "seal" : self == .blur ? "drop" : self == .dodgeBurn ? "sun.max" : self == .gradient ? "square.bottomhalf.filled" : self == .shape ? "square.on.circle" : self == .crop ? "crop" : self == .move ? "arrow.up.left.and.arrow.down.right" : self == .hand ? "hand.draw" : "magnifyingglass" }
+    var label: String { self == .type ? "Type (T)" : self == .eyedropper ? "Eyedropper (I)" : self == .marquee ? "Marquee (M)" : self == .lasso ? "Lasso (L)" : self == .wand ? "Magic (W) · Tab switches Wand and Object" : self == .brush ? "Brush (B) · Eraser (E)" : self == .spotHealing ? "Spot Healing Brush (J)" : self == .cloneStamp ? "Clone Stamp (S) · Option-click sets the source" : self == .blur ? "Smear (R)" : self == .dodgeBurn ? "Dodge / Burn (O)" : self == .gradient ? "Gradient (G)" : self == .shape ? "Shape (U) · Shift-U switches Rectangle/Ellipse" : self == .crop ? "Crop (C)" : self == .move ? "Move / Transform (V)" : self == .hand ? "Hand (H)" : "Zoom (Z)" }
     /// The tool rail's tooltip: the name and key, then one sentence on what the tool does. A new case needs one line here.
     var help: String {
         switch self {
@@ -112,6 +112,7 @@ enum NavigationTool: String, CaseIterable {
         case .spotHealing: "Spot Healing Brush (J) — Paint over a blemish or unwanted detail to remove it, blending with the surroundings."
         case .cloneStamp: "Clone Stamp (S) — Option-click to set a source, then paint to copy pixels from there."
         case .blur: "Smear (R) — Drag to push, smudge or soften pixels, depending on the mode."
+        case .dodgeBurn: "Dodge / Burn (O) — Paint to lighten (dodge) or darken (burn) shadows, midtones or highlights; Tab switches the mode."
         case .gradient: "Gradient (G) — Drag across the canvas to fill with a blend of colors; drag the ends to adjust."
         case .shape: "Shape (U) — Drag to draw a rectangle, ellipse or line on a new layer. Shift-U switches shapes."
         case .type: "Type (T) — Drag a text box, or click existing text, to add and edit text."
@@ -231,11 +232,13 @@ final class EditorSession {
     var brushSettings = BrushSettings() { didSet { refreshGradient() } }
     var spotHealingMode: SpotHealingMode = .contentAware
     var blurMode: BlurToolMode = .liquify
+    var dodgeBurnMode: DodgeBurnMode = .dodge
+    var dodgeBurnRange: DodgeBurnRange = .midtones
     /// The Brush's two modes: Paint lays down the foreground color, Erase clears pixels away (B and E).
     var brushMode: BrushToolMode = .paint
     /// The tool rail's icon, which follows the mode a tool is in.
     func symbol(for tool: NavigationTool) -> String {
-        tool == .brush && brushMode == .erase ? "eraser" : tool.symbol
+        tool == .brush && brushMode == .erase ? "eraser" : tool == .dodgeBurn && dodgeBurnMode == .burn ? "flame" : tool.symbol
     }
     /// The Magic tool's two modes: Wand selects by color, Object traces the object under the pointer (Tab).
     var wandMode: WandMode = .wand
@@ -247,8 +250,8 @@ final class EditorSession {
     /// soft by default, while Brush and Spot Healing share theirs.
     /// The tips of the brush families not in use: Clone Stamp and Smear each keep their own size, hardness and
     /// opacity (both starting soft); the other brushes share one.
-    @ObservationIgnored var parkedBrushTips: [Int: (diameter: CGFloat, hardness: CGFloat, opacity: CGFloat)] = [1: (40, 0, 1), 2: (40, 0, 1)]
-    private static func tipFamily(_ tool: NavigationTool) -> Int { tool == .cloneStamp ? 1 : tool == .blur ? 2 : 0 }
+    @ObservationIgnored var parkedBrushTips: [Int: (diameter: CGFloat, hardness: CGFloat, opacity: CGFloat)] = [1: (40, 0, 1), 2: (40, 0, 1), 3: (60, 0, 0.5)]
+    private static func tipFamily(_ tool: NavigationTool) -> Int { tool == .cloneStamp ? 1 : tool == .blur ? 2 : tool == .dodgeBurn ? 3 : 0 }
     @ObservationIgnored var cloneOffset: CGSize?
     var maskPaintWhite = false { didSet { refreshGradient() } }
     var backgroundColor = PaletteColor.white { didSet { refreshGradient() } }
@@ -431,6 +434,7 @@ final class EditorSession {
         case .shape: toggleShapeKind()
         case .brush: brushMode = next(brushMode)
         case .blur: blurMode = next(blurMode)
+        case .dodgeBurn: dodgeBurnMode = next(dodgeBurnMode)
         case .spotHealing: spotHealingMode = next(spotHealingMode)
         case .cloneStamp: cloneSettings.sampleAllLayers.toggle()
         case .gradient: gradientSettings.shape = next(gradientSettings.shape)

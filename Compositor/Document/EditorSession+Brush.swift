@@ -50,7 +50,7 @@ extension EditorSession {
     func beginBrush(at point: CGPoint) {
         // Spot Healing and Clone Stamp rework image pixels; they have nothing to do on a mask.
         if tool == .blur, blurMode != .blur { beginWarp(at: point); return }
-        guard tool == .brush || tool == .blur || (tool.isBrushTool && !isMaskSelected) else { return }
+        guard tool == .brush || tool == .blur || tool == .dodgeBurn || (tool.isBrushTool && !isMaskSelected) else { return }
         guard canPaint, let layer = activeLayer, let document else { brushError = paintRefusal; return }
         var sourceOffset: CGSize?
         if tool == .cloneStamp {
@@ -80,6 +80,13 @@ extension EditorSession {
                 stroke.cloneRender = blur.render
             }
             stroke.isBlur = tool == .blur
+            if tool == .dodgeBurn {
+                guard let toned = dodgeBurnSample(for: stroke) else { return }
+                stroke.clone = toned.sample
+                stroke.cloneRender = toned.render
+                stroke.isToneStroke = true
+                stroke.editName = dodgeBurnMode.rawValue
+            }
             brushStroke = stroke
             try stroke.append(point)
             brushAnchor = point
@@ -241,7 +248,7 @@ extension EditorSession {
         }
         let value = CGFloat(percent) / 100
         switch tool {
-        case .brush, .spotHealing, .cloneStamp, .blur: brushSettings.opacity = value
+        case .brush, .spotHealing, .cloneStamp, .blur, .dodgeBurn: brushSettings.opacity = value
         case .gradient: gradientSettings.opacity = value
         default: setSelectedLayersOpacity(Double(value))
         }

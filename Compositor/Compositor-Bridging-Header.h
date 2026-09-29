@@ -7,3 +7,4 @@
 #import "Rendering/ContentFill.h"
 #import "Rendering/AdjustPixels.h"
 #import "Rendering/DitherPixels.h"
+#import "Rendering/DodgeBurnPixels.h"

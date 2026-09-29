@@ -28,7 +28,7 @@ actor CanvasResizer {
                     moved.origin.x += offset.x
                     moved.origin.y += offset.y
                     return moved
-                }, maskLinked: layer.maskLinked, shape: layer.shape, text: layer.text))
+                }, maskLinked: layer.maskLinked, shape: layer.shape, text: layer.text, smartObject: layer.smartObject))
         }
         var images = snapshot.images
         // A colored extension is separate bottom-layer content. The old canvas
@@ -68,6 +68,6 @@ actor CanvasResizer {
                 transform: LayerTransform(origin: .zero, size: CGSize(width: options.width, height: options.height)),
                 imageFile: "\(id.uuidString).png"), at: 0)
         }
-        return ProjectSnapshot(manifest: manifest, images: images, masks: snapshot.masks)
+        return ProjectSnapshot(manifest: manifest, images: images, masks: snapshot.masks, smartObjects: snapshot.smartObjects)
     }
 }

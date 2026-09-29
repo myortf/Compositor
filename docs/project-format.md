@@ -42,6 +42,7 @@ Later fields are optional and not gated on the version, so older readers ignore 
 
 - `maskPlacement` and `maskLinked`: an unlinked mask (`maskLinked` false; missing means linked) keeps its own transform in `maskPlacement`, a document-space rectangle like the layer transform, and no longer follows the layer when it moves. Both require a `maskFile`.
 - `shape`: a layer made with the Shape tool keeps its style (`kind`, `red`/`green`/`blue`, `cornerRadius` in document pixels, and for lines `lineWidth` plus `start` and `end` as fractions of the layer box) so it redraws cleanly when scaled. Its PNG is still an ordinary raster; once anything else changes those pixels the metadata is dropped.
+- `smartObject`: true on a layer whose PNG is the flattened render of a nested document kept in `smartobjects/<layer UUID>/`. That folder is a full package of its own (`manifest.json`, `images/`, and `smartobjects/` again for smart objects inside it), at most 8 levels deep. Pixel budgets and limits count the whole tree. The layer can't be a group, adjustment, shape or text layer. Once anything else changes the layer's pixels the flag and folder are dropped on the next save. Older readers ignore both and show the PNG.
 
 ### Editable text
 

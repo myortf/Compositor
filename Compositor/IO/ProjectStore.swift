@@ -53,12 +53,16 @@ nonisolated struct ProjectLayerRecord: Codable, Sendable {
     /// The stroke and drop shadow drawn around the layer.
     var effects: LayerEffects? = nil
     var text: LayerTextStyle? = nil
+    /// True when `smartobjects/<id>/` holds this layer's nested package. Older versions ignore it and keep the pixels.
+    var smartObject: Bool? = nil
 }
 
 nonisolated struct ProjectSnapshot: @unchecked Sendable {
     let manifest: ProjectManifest
     let images: [UUID: ImportedImage]
     var masks: [UUID: ImportedImage] = [:]
+    /// Nested contents of smart object layers, by layer id.
+    var smartObjects: [UUID: ProjectSnapshot] = [:]
 }
 
 nonisolated enum ProjectError: LocalizedError {
@@ -81,10 +85,34 @@ actor ProjectStore {
         let version: Int
     }
 
+    static let maxSmartObjectDepth = 8
+
     func save(_ snapshot: ProjectSnapshot, to url: URL, quickLook: QuickLookImages? = nil) throws {
+        var pixels = 0, maskPixels = 0
+        var contents = try packageContents(snapshot, depth: 0, pixels: &pixels, maskPixels: &maskPixels)
+        // Quick Look's Space-bar preview reads this by name; loading ignores it.
+        if let quickLook {
+            contents["QuickLook"] = FileWrapper(directoryWithFileWrappers: [
+                "Preview.jpg": FileWrapper(regularFileWithContents: quickLook.preview),
+            ])
+        }
+        let package = FileWrapper(directoryWithFileWrappers: contents)
+        var coordinationError: NSError?
+        var writeError: Error?
+        NSFileCoordinator().coordinate(writingItemAt: url, options: .forReplacing, error: &coordinationError) { destination in
+            do {
+                // Foundation stages a sibling package and atomically replaces the
+                // destination only once the complete package has been written.
+                try package.write(to: destination, options: .atomic, originalContentsURL: nil)
+            } catch { writeError = error }
+        }
+        if let error = coordinationError ?? writeError as NSError? { throw error }
+    }
+
+    /// The files of one package: the project, or the nested project of a smart object. Pixel budgets count the whole tree.
+    private func packageContents(_ snapshot: ProjectSnapshot, depth: Int, pixels: inout Int, maskPixels: inout Int) throws -> [String: FileWrapper] {
         try validate(snapshot.manifest)
         var images: [String: FileWrapper] = [:]
-        var pixels = 0, maskPixels = 0
         for layer in snapshot.manifest.layers {
           for isMask in [false, true] {
             guard let filename = isMask ? layer.maskFile : layer.imageFile else { continue }
@@ -113,40 +141,34 @@ actor ProjectStore {
             "manifest.json": FileWrapper(regularFileWithContents: metadata),
             "images": FileWrapper(directoryWithFileWrappers: images)
         ]
-        // Quick Look's Space-bar preview reads this by name; loading ignores it.
-        if let quickLook {
-            contents["QuickLook"] = FileWrapper(directoryWithFileWrappers: [
-                "Preview.jpg": FileWrapper(regularFileWithContents: quickLook.preview),
-            ])
+        var nested: [String: FileWrapper] = [:]
+        for layer in snapshot.manifest.layers where layer.smartObject == true {
+            guard depth < Self.maxSmartObjectDepth, let child = snapshot.smartObjects[layer.id] else { throw ProjectError.invalid }
+            nested[layer.id.uuidString] = FileWrapper(directoryWithFileWrappers:
+                try packageContents(child, depth: depth + 1, pixels: &pixels, maskPixels: &maskPixels))
         }
-        let package = FileWrapper(directoryWithFileWrappers: contents)
-        var coordinationError: NSError?
-        var writeError: Error?
-        NSFileCoordinator().coordinate(writingItemAt: url, options: .forReplacing, error: &coordinationError) { destination in
-            do {
-                // Foundation stages a sibling package and atomically replaces the
-                // destination only once the complete package has been written.
-                try package.write(to: destination, options: .atomic, originalContentsURL: nil)
-            } catch { writeError = error }
-        }
-        if let error = coordinationError ?? writeError as NSError? { throw error }
+        if !nested.isEmpty { contents["smartobjects"] = FileWrapper(directoryWithFileWrappers: nested) }
+        return contents
     }
 
     func load(from url: URL) throws -> ProjectSnapshot {
         var coordinationError: NSError?
         var result: Result<ProjectSnapshot, Error>?
         NSFileCoordinator().coordinate(readingItemAt: url, options: .withoutChanges, error: &coordinationError) { source in
-            result = Result { try readPackage(source) }
+            result = Result {
+                var pixels = 0, maskPixels = 0
+                return try readPackage(source, root: source, depth: 0, pixels: &pixels, maskPixels: &maskPixels)
+            }
         }
         if let coordinationError { throw coordinationError }
         guard let result else { throw ProjectError.invalid }
         return try result.get()
     }
 
-    private func readPackage(_ url: URL) throws -> ProjectSnapshot {
+    private func readPackage(_ url: URL, root: URL, depth: Int, pixels: inout Int, maskPixels: inout Int) throws -> ProjectSnapshot {
         guard try url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true else { throw ProjectError.invalid }
         let metadataURL = url.appendingPathComponent("manifest.json")
-        try checkFile(metadataURL, inside: url, maximumBytes: 4 * 1024 * 1024)
+        try checkFile(metadataURL, inside: root, maximumBytes: 4 * 1024 * 1024)
         let manifest: ProjectManifest
         let metadata = try Data(contentsOf: metadataURL)
         let header: Header
@@ -159,12 +181,11 @@ actor ProjectStore {
         try validate(manifest)
         var images: [UUID: ImportedImage] = [:]
         var masks: [UUID: ImportedImage] = [:]
-        var pixels = 0, maskPixels = 0
         for layer in manifest.layers {
           for isMask in [false, true] {
             guard let filename = isMask ? layer.maskFile : layer.imageFile else { continue }
             let file = url.appendingPathComponent("images").appendingPathComponent(filename)
-            try checkFile(file, inside: url, maximumBytes: 512 * 1024 * 1024)
+            try checkFile(file, inside: root, maximumBytes: 512 * 1024 * 1024)
             let asset = try autoreleasepool {
                 // Decoded from the file's bytes in memory, not from the file: an image made from a file source stays tied
                 // to it, and the next save replaces that file (ImageIO: "mmapped file changed"), so an image kept for undo
@@ -192,7 +213,13 @@ actor ProjectStore {
             if isMask { masks[layer.id] = asset } else { images[layer.id] = asset }
           }
         }
-        return ProjectSnapshot(manifest: manifest, images: images, masks: masks)
+        var nested: [UUID: ProjectSnapshot] = [:]
+        for layer in manifest.layers where layer.smartObject == true {
+            let folder = url.appendingPathComponent("smartobjects").appendingPathComponent(layer.id.uuidString)
+            guard depth < Self.maxSmartObjectDepth, FileManager.default.fileExists(atPath: folder.path) else { throw ProjectError.invalid }
+            nested[layer.id] = try readPackage(folder, root: root, depth: depth + 1, pixels: &pixels, maskPixels: &maskPixels)
+        }
+        return ProjectSnapshot(manifest: manifest, images: images, masks: masks, smartObjects: nested)
     }
 
     private func validate(_ manifest: ProjectManifest) throws {
@@ -211,6 +238,9 @@ actor ProjectStore {
                       text.colorRuns == nil || manifest.version >= 10,
                       text.fontRuns == nil || manifest.version >= 11,
                       layer.imageFile != nil, layer.isGroup != true, layer.adjustment == nil else { throw ProjectError.invalid }
+            }
+            if layer.smartObject == true {
+                guard layer.imageFile != nil, layer.isGroup != true, layer.adjustment == nil, layer.text == nil, layer.shape == nil else { throw ProjectError.invalid }
             }
             if let adjustment = layer.adjustment {
                 guard manifest.version >= 7, layer.isGroup != true, layer.imageFile == nil, adjustment.isValid else { throw ProjectError.invalid }

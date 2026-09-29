@@ -176,6 +176,13 @@ struct NativeLayerList: NSViewRepresentable {
             mergeItem.isEnabled = validateMenuItem(mergeItem)
             menu.addItem(mergeItem)
 
+            if session.activeLayer?.liveSmartObject == nil {
+                let convertItem = NSMenuItem(title: "Convert to Smart Object", action: #selector(convertToSmartObjectAction), keyEquivalent: "")
+                convertItem.target = self
+                convertItem.isEnabled = validateMenuItem(convertItem)
+                menu.addItem(convertItem)
+            }
+
             menu.addItem(NSMenuItem.separator())
 
             // 8. Add Mask >
@@ -243,6 +250,8 @@ struct NativeLayerList: NSViewRepresentable {
                 return session.canEditLayers && session.activeLayer?.parentID != nil
             case #selector(mergeLayersAction):
                 return session.canMergeLayers
+            case #selector(convertToSmartObjectAction):
+                return session.canConvertToSmartObject
             case #selector(addWhiteMaskAction), #selector(addBlackMaskAction):
                 return session.canEditMask && session.activeLayer?.mask == nil
             case #selector(toggleMaskAction):
@@ -292,6 +301,10 @@ struct NativeLayerList: NSViewRepresentable {
 
         @objc func mergeLayersAction(_ sender: Any?) {
             session.mergeLayers()
+        }
+
+        @objc func convertToSmartObjectAction(_ sender: Any?) {
+            session.convertToSmartObject()
         }
 
         @objc func addWhiteMaskAction(_ sender: Any?) {

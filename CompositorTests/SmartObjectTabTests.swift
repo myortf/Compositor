@@ -105,4 +105,150 @@ struct SmartObjectTabTests {
         parent.session.openSmartObject?(shell.id)
         #expect(workspace.tabs.count == 2)
     }
+
+    @Test func closingAnEditedSmartObjectTabUpdatesTheLayerInOneUndoStep() async throws {
+        let (workspace, parent, nested, id) = try workspaceWithOpenSmartObject()
+        let before = try #require(layer(id, in: parent)?.asset?.image)
+        try edit(nested)
+        let undoCount = parent.session.history.undoCount
+        await workspace.close(nested.id)
+        #expect(workspace.tabs.count == 1)
+        #expect(workspace.current.id == parent.id)
+        let updated = try #require(layer(id, in: parent))
+        #expect(updated.asset?.image !== before)
+        #expect(updated.liveSmartObject?.content.layers.count == 2)
+        #expect(parent.session.history.undoCount == undoCount + 1)
+        #expect(parent.session.history.undoName == "Update Smart Object")
+        parent.session.undo()
+        #expect(layer(id, in: parent)?.asset?.image === before)
+        #expect(layer(id, in: parent)?.liveSmartObject?.content.layers.count == 1)
+    }
+
+    @Test func closingAnUntouchedSmartObjectTabRecordsNothing() async throws {
+        let (workspace, parent, nested, id) = try workspaceWithOpenSmartObject()
+        let before = try #require(layer(id, in: parent)?.asset?.image)
+        let undoCount = parent.session.history.undoCount
+        await workspace.close(nested.id)
+        #expect(workspace.tabs.count == 1)
+        #expect(parent.session.history.undoCount == undoCount)
+        #expect(layer(id, in: parent)?.asset?.image === before)
+    }
+
+    @Test func closingASmartObjectTabWhoseLayerWasDeletedDiscardsQuietly() async throws {
+        let (workspace, parent, nested, id) = try workspaceWithOpenSmartObject()
+        try edit(nested)
+        parent.session.document?.layers.removeAll { $0.id == id }
+        let undoCount = parent.session.history.undoCount
+        await workspace.close(nested.id)
+        #expect(workspace.tabs.count == 1)
+        #expect(layer(id, in: parent) == nil)
+        #expect(parent.session.history.undoCount == undoCount)
+    }
+
+    @Test func aLayerWhosePixelsWereEditedNoLongerTakesTheTabsEdits() async throws {
+        let (workspace, parent, nested, id) = try workspaceWithOpenSmartObject()
+        try edit(nested)
+        let painted = try Self.image(8, 6, gray: 0.1)
+        parent.session.document?.layers[0].asset = painted
+        let undoCount = parent.session.history.undoCount
+        await workspace.close(nested.id)
+        #expect(layer(id, in: parent)?.asset?.image === painted.image)
+        #expect(layer(id, in: parent)?.liveSmartObject == nil)
+        #expect(parent.session.history.undoCount == undoCount)
+    }
+
+    @Test func returningToTheParentAppliesTheEditsOnce() throws {
+        let (workspace, parent, nested, id) = try workspaceWithOpenSmartObject()
+        try edit(nested)
+        workspace.select(parent.id)
+        #expect(layer(id, in: parent)?.liveSmartObject?.content.layers.count == 2)
+        #expect(workspace.tabs.count == 2)
+        let undoCount = parent.session.history.undoCount
+        workspace.select(nested.id)
+        workspace.select(parent.id)
+        #expect(parent.session.history.undoCount == undoCount)
+    }
+
+    @Test func aTabKeepsItsOwnUndoAfterItsEditsAreApplied() throws {
+        let (workspace, parent, nested, _) = try workspaceWithOpenSmartObject()
+        try edit(nested)
+        workspace.select(parent.id)
+        #expect(nested.session.canUndo)
+        nested.session.undo()
+        workspace.select(nested.id)
+        workspace.select(parent.id)
+        #expect(layer(nested.smartObjectSource!.layerID, in: parent)?.liveSmartObject?.content.layers.count == 1)
+    }
+
+    @Test func changingTheNestedCanvasSizeRescalesTheShellAroundItsCenter() async throws {
+        let (workspace, parent, nested, id) = try workspaceWithOpenSmartObject()
+        parent.session.document?.layers[0].transform.rotation = 30
+        let before = try #require(layer(id, in: parent)?.transform)
+        let document = try #require(nested.session.document)
+        nested.session.document = CanvasDocument(id: document.id, width: 16, height: 12, layers: document.layers, resolution: document.resolution)
+        await workspace.close(nested.id)
+        let updated = try #require(layer(id, in: parent))
+        #expect(updated.asset?.image.width == 16 && updated.asset?.image.height == 12)
+        #expect(updated.liveSmartObject?.content.width == 16)
+        #expect(updated.transform.size == CGSize(width: before.size.width * 2, height: before.size.height * 2))
+        #expect(abs(updated.transform.center.x - before.center.x) < 0.001 && abs(updated.transform.center.y - before.center.y) < 0.001)
+        #expect(updated.transform.rotation == 30)
+    }
+
+    @Test func quittingAppliesAnEditedTabBeforeTheParentPromptsAndNeverPromptsForTheTab() async throws {
+        let (workspace, parent, nested, id) = try workspaceWithOpenSmartObject()
+        let window = makeWindow()
+        defer { window.orderOut(nil) }
+        workspace.window = window
+        parent.session.history.markSaved()
+        try edit(nested)
+        #expect(!parent.session.isModified)
+        let (quit, alerts) = try await answeringAlerts(on: window) { await workspace.confirmQuit() }
+        #expect(quit)
+        #expect(alerts == 1)
+        #expect(layer(id, in: parent)?.liveSmartObject?.content.layers.count == 2)
+    }
+
+    @Test func closingTheParentAppliesAnEditedTabBeforeItsPromptAndClosesTheTab() async throws {
+        let (workspace, parent, nested, id) = try workspaceWithOpenSmartObject()
+        let window = makeWindow()
+        defer { window.orderOut(nil) }
+        workspace.window = window
+        parent.session.history.markSaved()
+        try edit(nested)
+        #expect(!parent.session.isModified)
+        workspace.select(parent.id)
+        parent.session.history.markSaved()
+        workspace.select(nested.id)
+        nested.session.addBlankLayer()
+        let (_, alerts) = try await answeringAlerts(on: window) { await workspace.close(parent.id); return true }
+        #expect(alerts == 1)
+        #expect(workspace.tabs.count == 1)
+        #expect(workspace.tabs.allSatisfy { $0.smartObjectSource == nil })
+        #expect(layer(id, in: parent)?.liveSmartObject?.content.layers.count == 3)
+    }
+
+    @Test func closingTheParentOfAnEditedTabAppliesNestedLevelsInnermostFirst() async throws {
+        let workspace = ProjectWorkspace()
+        let parent = workspace.current
+        parent.session.createDocument(width: 40, height: 30)
+        let innermost = Self.smartLayer(try Self.image(8, 6))
+        let middle = Self.smartLayer(try Self.image(8, 6), holding: [innermost])
+        parent.session.document?.layers.append(middle)
+        let window = makeWindow()
+        defer { window.orderOut(nil) }
+        workspace.window = window
+        workspace.openSmartObject(layerID: middle.id)
+        let middleTab = workspace.current
+        workspace.openSmartObject(layerID: innermost.id)
+        let innermostTab = workspace.current
+        #expect(innermostTab.smartObjectSource?.tabID == middleTab.id)
+        try edit(innermostTab)
+        parent.session.history.markSaved()
+        let (_, alerts) = try await answeringAlerts(on: window) { await workspace.close(parent.id); return true }
+        #expect(alerts == 1)
+        #expect(workspace.tabs.count == 1)
+        let applied = try #require(layer(middle.id, in: parent)?.liveSmartObject)
+        #expect(applied.content.layers.first { $0.id == innermost.id }?.liveSmartObject?.content.layers.count == 2)
+    }
 }

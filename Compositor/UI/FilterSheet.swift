@@ -135,6 +135,15 @@ struct FilterSheet: View {
                 control("Midtones", \.tonalMidtones, range: -100...100, unit: "%", decimals: 0, logarithmic: false)
                 control("Highlights", \.tonalHighlights, range: -100...100, unit: "%", decimals: 0, logarithmic: false)
                 control("Radius", \.tonalRadius, range: 1...100, unit: "px", decimals: 0, logarithmic: true)
+            case .unsharpMask:
+                control("Amount", \.sharpenAmount, range: Sharpen.amountRange, unit: "%", decimals: 0, logarithmic: false)
+                control("Radius", \.sharpenRadius, range: Sharpen.radiusRange, unit: "px", decimals: 1, logarithmic: true)
+                control("Threshold", \.sharpenThreshold, range: Sharpen.thresholdRange, unit: "", decimals: 0, logarithmic: false)
+                    .help("Leave alone any pixel that differs from its neighbors by fewer levels than this, so smooth areas and noise are not sharpened")
+            case .highPass:
+                control("Radius", \.highPassRadius, range: Sharpen.radiusRange, unit: "px", decimals: 1, logarithmic: true)
+                Text("Keeps only the edges over mid-gray. Set the layer's blend mode to Overlay or Soft Light to sharpen with it.")
+                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             case .lensCorrection:
                 control("Remove Distortion", \.distortion, range: -100...100, unit: "", decimals: 0, logarithmic: false)
                 Text("Positive straightens lines that bow outward (barrel); negative, lines that bow inward (pincushion).")

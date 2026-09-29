@@ -14,7 +14,7 @@ struct BrushQuickPanel: View {
                 Slider(value: Binding(get: { Double(session.brushSettings.hardness) },
                                       set: { session.brushSettings.hardness = CGFloat(min(1, max(0, $0))) }), in: 0...1)
             }
-            row(session.tool == .blur ? "Strength" : "Opacity", value: "\(Int((session.brushSettings.opacity * 100).rounded()))%") {
+            row(session.tool == .blur ? "Strength" : session.tool == .dodgeBurn ? "Exposure" : "Opacity", value: "\(Int((session.brushSettings.opacity * 100).rounded()))%") {
                 Slider(value: Binding(get: { Double(session.brushSettings.opacity) },
                                       set: { session.brushSettings.opacity = CGFloat(min(1, max(0.01, $0))) }), in: 0.01...1)
             }

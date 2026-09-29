@@ -2242,6 +2242,7 @@ final class CanvasView: NSView {
             case "}" where session.tool.isBrushTool: session.changeBrushHardness(increase: true)
             case "a": session.selectTool(.idle)
             case "r": session.selectTool(.blur)
+            case "o": session.selectTool(.dodgeBurn)
             case "c": session.selectTool(.crop)
             case "v": session.selectTool(.move)
             case "h": session.selectTool(.hand)

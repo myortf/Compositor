@@ -8,11 +8,16 @@ final class ProjectTab: Identifiable {
     let session: EditorSession
     let controller: ProjectController
     let defaultName: String
-    var title: String { session.projectURL?.deletingPathExtension().lastPathComponent ?? defaultName }
+    /// Set when this tab edits a smart object's contents: the tab and layer it writes back to, and the layer's name
+    /// when it was opened.
+    var smartObjectSource: (tabID: UUID, layerID: UUID)?
+    var smartObjectName: String?
+    var title: String { smartObjectName.map { "◆ \($0)" } ?? session.projectURL?.deletingPathExtension().lastPathComponent ?? defaultName }
     init(name: String) {
         defaultName = name
         session = EditorSession()
         controller = ProjectController(session: session)
+        session.openSmartObject = { [weak controller] id in controller?.workspace?.openSmartObject(layerID: id) }
     }
 }
 
@@ -59,6 +64,21 @@ final class ProjectWorkspace {
         selectedID = id
         current.controller.window = window
         current.controller.resumeExternalChangeCheck()
+    }
+    func smartObjectTab(for layerID: UUID, in parent: UUID) -> ProjectTab? {
+        tabs.first { $0.smartObjectSource?.tabID == parent && $0.smartObjectSource?.layerID == layerID }
+    }
+    /// Opens the current tab's smart object layer in a tab of its own, or brings its tab forward.
+    func openSmartObject(layerID: UUID) {
+        guard canSwitch, let layer = current.session.document?.layers.first(where: { $0.id == layerID }),
+              let smart = layer.liveSmartObject else { return }
+        let parent = current
+        if let existing = smartObjectTab(for: layerID, in: parent.id) { select(existing.id); return }
+        parent.session.commitTransform()
+        let tab = addTab(reuseEmpty: false)
+        tab.smartObjectSource = (parent.id, layerID)
+        tab.smartObjectName = layer.name
+        tab.session.installSmartObject(smart.content)
     }
     func newCanvas() {
         guard canSwitch else { return }

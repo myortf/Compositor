@@ -74,7 +74,7 @@ struct NativeLayerList: NSViewRepresentable {
             } else {
                 // Selection never reloads cells or recreates thumbnails.
                 let changed = IndexSet(next.indices.filter {
-                    editableChanged || expansionChanged || (old[$0].name != next[$0].name || old[$0].isVisible != next[$0].isVisible || old[$0].size != next[$0].size || old[$0].parentID != next[$0].parentID || old[$0].isGroup != next[$0].isGroup || old[$0].asset?.image !== next[$0].asset?.image || (old[$0].liveText != nil) != (next[$0].liveText != nil) || old[$0].effects != next[$0].effects || old[$0].mask != next[$0].mask || old[$0].maskSourceID != next[$0].maskSourceID) || previousDetails[next[$0].id]?.depth != rowDetails[next[$0].id]?.depth || previousDetails[next[$0].id]?.visible != rowDetails[next[$0].id]?.visible
+                    editableChanged || expansionChanged || (old[$0].name != next[$0].name || old[$0].isVisible != next[$0].isVisible || old[$0].size != next[$0].size || old[$0].parentID != next[$0].parentID || old[$0].isGroup != next[$0].isGroup || old[$0].asset?.image !== next[$0].asset?.image || (old[$0].liveText != nil) != (next[$0].liveText != nil) || (old[$0].liveSmartObject != nil) != (next[$0].liveSmartObject != nil) || old[$0].effects != next[$0].effects || old[$0].mask != next[$0].mask || old[$0].maskSourceID != next[$0].maskSourceID) || previousDetails[next[$0].id]?.depth != rowDetails[next[$0].id]?.depth || previousDetails[next[$0].id]?.visible != rowDetails[next[$0].id]?.visible
                 })
                 let resized = IndexSet(next.indices.filter { (old[$0].effects?.kinds.count ?? 0) != (next[$0].effects?.kinds.count ?? 0) })
                 // Adding or removing an effect only changes how tall a row is. Left to AppKit that is animated, and
@@ -114,6 +114,14 @@ struct NativeLayerList: NSViewRepresentable {
                 session.selectLayer(rows[row].id)
             }
             let menu = NSMenu()
+
+            if rows[row].liveSmartObject != nil {
+                let editItem = NSMenuItem(title: "Edit Smart Object Contents", action: #selector(editSmartObjectAction), keyEquivalent: "")
+                editItem.target = self
+                editItem.isEnabled = validateMenuItem(editItem)
+                menu.addItem(editItem)
+                menu.addItem(NSMenuItem.separator())
+            }
 
             // 1. Duplicate Layer
             let duplicateItem = NSMenuItem(title: "Duplicate Layer", action: #selector(duplicateLayerAction), keyEquivalent: "")
@@ -227,6 +235,8 @@ struct NativeLayerList: NSViewRepresentable {
 
         func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
             switch menuItem.action {
+            case #selector(editSmartObjectAction):
+                return session.canEditLayers && session.selectedLayerIDs.count == 1 && session.activeLayer?.liveSmartObject != nil
             case #selector(duplicateLayerAction):
                 return session.canEditLayers && session.activeLayer != nil
             case #selector(renameLayerAction):
@@ -261,6 +271,9 @@ struct NativeLayerList: NSViewRepresentable {
             }
         }
 
+        @objc func editSmartObjectAction(_ sender: Any?) {
+            if let id = session.activeLayerID { session.openSmartObject?(id) }
+        }
         @objc func duplicateLayerAction(_ sender: Any?) {
             session.duplicateActiveLayer()
         }
@@ -368,6 +381,7 @@ struct NativeLayerList: NSViewRepresentable {
             if cell?.isOnControl(point) == true {
                 if rows[table.clickedRow].liveText != nil { session.editActiveText(); return }
                 if rows[table.clickedRow].adjustment?.kind.isEditable == true { session.adjustmentEditingID = id; return }
+                if rows[table.clickedRow].liveSmartObject != nil { session.openSmartObject?(id); return }
             }
             session.renamingLayerID = id
         }
@@ -762,6 +776,8 @@ private final class LayerCell: NSTableCellView, NSTextFieldDelegate {
     private let thumbnail = LayerThumbnailButton()
     private let maskThumbnail = LayerThumbnailButton()
     private let disabledMaskMark = MaskDisabledMark(labelWithString: "╱")
+    /// Marks the layer as a smart object, in the corner of its thumbnail.
+    private let smartObjectBadge = SmartObjectBadge()
     /// Between the thumbnails: the chain while layer and mask are linked, empty (still clickable) once unlinked.
     private let linkButton = NSButton()
     private var maskGap: NSLayoutConstraint!
@@ -835,6 +851,10 @@ private final class LayerCell: NSTableCellView, NSTextFieldDelegate {
         disabledMaskMark.font = .systemFont(ofSize: 32, weight: .medium)
         disabledMaskMark.textColor = .systemRed
         disabledMaskMark.isHidden = true
+        smartObjectBadge.image = NSImage(systemSymbolName: "square.stack.3d.up.fill", accessibilityDescription: "Smart object")
+        smartObjectBadge.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 9, weight: .semibold)
+        smartObjectBadge.contentTintColor = .controlAccentColor
+        smartObjectBadge.isHidden = true
         nameLabel.lineBreakMode = .byTruncatingTail
         // One line, whatever the name holds: a text layer named after a paragraph would otherwise grow the row.
         nameLabel.usesSingleLineMode = true
@@ -842,7 +862,7 @@ private final class LayerCell: NSTableCellView, NSTextFieldDelegate {
         nameLabel.font = .systemFont(ofSize: 13)
         dimensions.font = .systemFont(ofSize: 10)
         dimensions.textColor = .secondaryLabelColor
-        for view in [eye, disclosure, thumbnail, linkButton, maskThumbnail, disabledMaskMark, nameLabel, dimensions] {
+        for view in [eye, disclosure, thumbnail, smartObjectBadge, linkButton, maskThumbnail, disabledMaskMark, nameLabel, dimensions] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
         }
@@ -885,6 +905,8 @@ private final class LayerCell: NSTableCellView, NSTextFieldDelegate {
             maskThumbnail.centerXAnchor.constraint(equalTo: maskSlot.centerXAnchor),
             maskThumbnail.centerYAnchor.constraint(equalTo: topAnchor, constant: 26),
             maskThumbnailWidth, maskThumbnailHeight,
+            smartObjectBadge.trailingAnchor.constraint(equalTo: thumbnail.trailingAnchor, constant: 3),
+            smartObjectBadge.bottomAnchor.constraint(equalTo: thumbnail.bottomAnchor, constant: 3),
             disabledMaskMark.centerXAnchor.constraint(equalTo: maskThumbnail.centerXAnchor),
             disabledMaskMark.centerYAnchor.constraint(equalTo: maskThumbnail.centerYAnchor),
             nameLabel.leadingAnchor.constraint(equalTo: maskSlot.trailingAnchor, constant: 5),
@@ -944,6 +966,7 @@ private final class LayerCell: NSTableCellView, NSTextFieldDelegate {
         maskThumbnail.layerID = layer.id
         maskWidth.constant = layer.mask == nil ? 0 : 30
         disabledMaskMark.isHidden = layer.mask?.isEnabled != false
+        smartObjectBadge.isHidden = layer.liveSmartObject == nil
         thumbnail.isEnabled = !session.showsBusy && !session.isImporting
         maskThumbnail.isEnabled = thumbnail.isEnabled
         let linkable = layer.mask != nil && layer.adjustment == nil && !layer.isGroup
@@ -963,7 +986,7 @@ private final class LayerCell: NSTableCellView, NSTextFieldDelegate {
         // A reused cell must not carry another row's half-finished rename.
         if renaming, layerID != layer.id { restoreLabel() }
         if !renaming { nameLabel.stringValue = (layer.maskSourceID == nil ? "" : "↳ ") + layer.name }
-        dimensions.stringValue = layer.liveText != nil ? "Text · Double-click to edit" : layer.adjustment != nil ? "Adjustment · Double-click to edit" : layer.isGroup ? "Folder" : layer.sizeLabel
+        dimensions.stringValue = layer.liveText != nil ? "Text · Double-click to edit" : layer.adjustment != nil ? "Adjustment · Double-click to edit" : layer.liveSmartObject != nil ? "Smart Object · Double-click to edit" : layer.isGroup ? "Folder" : layer.sizeLabel
         if let source = layer.maskSourceID {
             let sourceName = session.document?.layers.first(where: { $0.id == source })?.name ?? "Missing source"
             dimensions.stringValue = "Clipped to \(sourceName)"
@@ -1357,6 +1380,10 @@ private final class EyeSwipeButton: NSButton {
     }
 }
 private final class MaskDisabledMark: NSTextField {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
+private final class SmartObjectBadge: NSImageView {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 

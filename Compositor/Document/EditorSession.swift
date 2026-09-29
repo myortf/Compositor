@@ -881,14 +881,37 @@ final class EditorSession {
             viewport.fit(documentSize: document!.size)
         }
         guard let document else { return }
-        let center = point ?? CGPoint(x: CGFloat(document.width) / 2, y: CGFloat(document.height) / 2)
-        var layer = ImageLayer(asset: asset, origin: CGPoint(
-            x: floor(center.x - CGFloat(asset.image.width) / 2),
-            y: floor(center.y - CGFloat(asset.image.height) / 2)))
+        var layer = ImageLayer(asset: asset, origin: .zero)
+        layer.transform = placedTransform(for: CGSize(width: asset.image.width, height: asset.image.height), centeredAt: point)
         layer.parentID = activeLayer?.isGroup == true ? activeLayerID : activeLayer?.parentID
         if let parent = layer.parentID { collapsedGroupIDs.remove(parent) }
         self.document?.layers.append(layer)
         activeLayerID = layer.id
+    }
+
+    /// Where a newly added image of `pixels` goes: centered on the canvas, or on `point` when dropped there, and
+    /// scaled down to fit when it is bigger than the canvas. A dropped image snaps to the canvas, guides and layers
+    /// like a layer being moved, so it doesn't stop a pixel or two short of the edge or center.
+    func placedTransform(for pixels: CGSize, centeredAt point: CGPoint? = nil) -> LayerTransform {
+        guard let document else { return LayerTransform(origin: .zero, size: pixels) }
+        let canvas = document.size
+        var size = pixels
+        if pixels.width > canvas.width || pixels.height > canvas.height {
+            let factor = min(canvas.width / pixels.width, canvas.height / pixels.height)
+            size = CGSize(width: min(max(1, (pixels.width * factor).rounded()), canvas.width),
+                          height: min(max(1, (pixels.height * factor).rounded()), canvas.height))
+        }
+        let center = point ?? CGPoint(x: canvas.width / 2, y: canvas.height / 2)
+        var placed = LayerTransform(origin: CGPoint(x: floor(center.x - size.width / 2), y: floor(center.y - size.height / 2)),
+                                    size: size)
+        guard point != nil, snappingEnabled else { return placed }
+        let targets = alignmentSnapTargets(includeCenters: true)
+        let tolerance = TransformSnap.distance / max(viewport.pointsPerPixel, 0.0001)
+        let snap = TransformSnap.offset(for: CGRect(origin: placed.origin, size: size), xs: targets.xs, ys: targets.ys,
+                                        tolerance: tolerance)
+        placed.origin.x += snap.offset.width
+        placed.origin.y += snap.offset.height
+        return placed
     }
 
     /// Puts the sheet up before the file is read, so a big PSD doesn't leave the click unanswered.

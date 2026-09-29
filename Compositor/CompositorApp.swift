@@ -248,6 +248,10 @@ struct CompositorApp: App {
                         .disabled(!session.canModifySelection)
                     Button("Feather…") { session.promptSelectionAmount(.feather) }
                         .disabled(!session.canModifySelection)
+                    Button("Smooth…") { session.promptSelectionAmount(.smooth) }
+                        .disabled(!session.canModifySelection)
+                    Button("Border…") { session.promptSelectionAmount(.border) }
+                        .disabled(!session.canModifySelection)
                 }
                 CommandMenu("Image") {
                     Button("Curves…") { session.beginFilter(.curves) }

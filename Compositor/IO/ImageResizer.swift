@@ -111,8 +111,7 @@ extension EditorSession {
         beginEdit(actionName)
         let m = snapshot.manifest
         document = CanvasDocument(id: m.documentID, width: m.width, height: m.height,
-            layers: m.layers.map { ImageLayer(id: $0.id, asset: snapshot.images[$0.id], name: $0.name,
-                isVisible: $0.isVisible, transform: $0.transform, parentID: $0.parentID, isGroup: $0.isGroup == true, opacity: $0.opacity ?? 1, blendMode: $0.blendMode ?? .normal, mask: snapshot.mask(for: $0), maskSourceID: $0.maskSourceID, adjustment: $0.adjustment) }, resolution: m.resolution ?? 72, guides: m.guides ?? [])
+            layers: Self.layers(from: snapshot), resolution: m.resolution ?? 72, guides: m.guides ?? [])
         endEdit()
         viewport.fit(documentSize: document!.size)
     }

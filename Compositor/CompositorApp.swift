@@ -328,6 +328,8 @@ struct CompositorApp: App {
                     Group {
                         Button(session.mergeTitle) { session.mergeLayers() }
                             .configuredKeyboardShortcut("e").disabled(!session.canMergeLayers)
+                        Button("Convert to Smart Object") { session.convertToSmartObject() }
+                            .disabled(!session.canConvertToSmartObject)
                         Divider()
                         Button("Flip Layer Horizontal") { session.flipLayers(horizontally: true) }
                             .disabled(!session.canTransform)

@@ -88,39 +88,26 @@ for those kinds).
 
 ## File format
 
-Additive change, version bump per `docs/project-format.md` convention
-(next version, e.g. 12): a layer record gains an optional `smartObject`
-object:
+Additive and ungated, like `shape` and `effects`: a layer record gains an
+optional `smartObject: true`. The nested contents live in
+`smartobjects/<layer UUID>/`, a full package of its own (`manifest.json`,
+`images/`, and `smartobjects/` again for smart objects inside it), read and
+written by the same `ProjectStore` code recursively. The format version does
+not change. Older builds ignore the field and the folder and render the layer's
+own flattened PNG, so a smart object degrades to a regular image layer.
 
-```json
-"smartObject": {
-  "width": 4032,
-  "height": 3024,
-  "resolution": 72,
-  "manifestFile": "<layer UUID>.smartobject.json"
-}
-```
+Nesting is limited to 8 levels (save and load both reject deeper trees), and
+the pixel budgets and layer limits count the whole tree. A smart object layer
+can't be a group, adjustment, shape or text layer.
 
-The nested manifest (`smartobjects/<layer UUID>.smartobject.json`) reuses the
-existing project manifest schema (same `ProjectManifest` layer records,
-recursively — a smart object's own layers can themselves carry masks,
-adjustments, effects, text, even nested smart objects within depth limits
-matching the existing 64-level group nesting guard). Its images live under
-`smartobjects/<layer UUID>/images/`, parallel to the top-level `images/`
-folder, so asset filenames never collide between nesting levels.
+Liveness follows the shape/text pattern: the layer stores the flattened render
+it was made with, and is a smart object only while its asset is that same
+image. Any other pixel edit (paint, filter, invert, resample) turns it into
+plain pixels, and the nested folder is not written on the next save.
 
-Because the field and folder are additive:
-- Files declaring versions before the bump reject a `smartObject` field, per
-  the existing convention (`ProjectStore` validation).
-- Older app builds ignore the unknown field and the extra folder entirely and
-  render the shell's own PNG — a smart object degrades gracefully to a
-  regular image layer.
-
-Limits: nested `width`/`height`/pixel-count/layer-count use the same
-`DocumentLimits` as the top-level document. Round-trip tests (per AGENTS.md)
-cover: save → reopen → contents unchanged; convert → edit inside → apply →
-save → reopen → edited contents still editable; opening a file with a
-`smartObject` field under a pre-bump declared version is rejected.
+Round-trip tests cover save and reopen, smart objects inside smart objects,
+a missing nested package, over-deep nesting, and dropping the smart object
+after a pixel edit.
 
 ## UI / UX flow
 
@@ -178,20 +165,16 @@ the same primitive `mergeLayers()` already uses to flatten a layer subset.
 
 ## Edge cases
 
-- **Resizing the canvas inside the smart object**: allowed: the nested
-  document's `width`/`height` can change like any project's Canvas Size /
-  Image Size. The shell's `transform.size` (its footprint on the parent
-  canvas) does not change automatically — the rendered asset's pixel
-  dimensions change, same as any other pixel-replacing edit (e.g. Image
-  Size) already handles for ordinary layers.
+- **Resizing the canvas inside the smart object**: allowed. On apply, the
+  shell's footprint on the parent canvas is scaled by the ratio of the new to
+  the old nested pixel size around its center, so the content keeps its scale.
 - **Deleting the smart-object layer**: removes its nested content and
   `smartobjects/<layer UUID>/` folder on next save, same lifecycle as an
   orphaned mask file today.
 - **Duplicating**: independent copy — a new nested manifest/UUID, no shared
   state (see "Out of scope" above for linked duplicates).
 - **Nesting depth**: a smart object's own layers may include further smart
-  objects; reuse the existing 64-level ancestor guard (`LayerHierarchy`) to
-  bound recursion in both the renderer and the file-format validator.
+  objects; limited to 8 levels by the file-format reader and writer.
 - **Opening a smart-object tab that's already open**: reuse the existing tab
   instead of opening a second one for the same layer (mirrors how
   `ProjectWorkspace.addTab(reuseEmpty:)` already avoids duplicate empty
@@ -211,9 +194,6 @@ the same primitive `mergeLayers()` already uses to flatten a layer subset.
   records exactly one undo step; a no-op close records none.
 - Round-trip: save → reopen → smart object still present, editable, and its
   nested layers unchanged.
-- Backward compatibility: a manifest declaring a pre-bump version containing
-  a `smartObject` field is rejected (existing `ProjectStore` validation
-  pattern).
 - Forward compatibility (documented, not automatable without an old binary):
   the additive-field convention means an older build renders the shell's own
   PNG and never sees `smartObject`.

@@ -116,6 +116,8 @@ final class EditorSession {
     var effectSelection: LayerEffectSelection?
     @ObservationIgnored var effectsPreviews = EffectsPreviewCache()
     var projectURL: URL?
+    /// Opens one of this project's smart object layers in a tab of its own; set by the tab that holds this session.
+    @ObservationIgnored var openSmartObject: ((UUID) -> Void)?
     /// Blocks overlapping edits immediately. Not observed by the UI: controls only dim via
     /// `showsBusy`, after an operation has run long enough to be worth showing, so quick
     /// edits (invert, fills, stroke commits) never flash the interface.

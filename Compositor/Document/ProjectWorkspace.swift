@@ -8,18 +8,30 @@ final class ProjectTab: Identifiable {
     let session: EditorSession
     let controller: ProjectController
     let defaultName: String
-    var title: String { session.projectURL?.deletingPathExtension().lastPathComponent ?? defaultName }
+    /// Set when this tab edits a smart object's contents: the tab and layer it writes back to, the layer's name when it
+    /// was opened, and the contents as of the last apply (what an edit is measured against).
+    var smartObjectSource: (tabID: UUID, layerID: UUID)?
+    var smartObjectName: String?
+    var smartObjectBaseline: SmartObjectContent?
+    var title: String { smartObjectName.map { "◆ \($0)" } ?? session.projectURL?.deletingPathExtension().lastPathComponent ?? defaultName }
     init(name: String) {
         defaultName = name
         session = EditorSession()
         controller = ProjectController(session: session)
+        session.openSmartObject = { [weak controller] id in controller?.workspace?.openSmartObject(layerID: id) }
     }
 }
 
 @MainActor @Observable
 final class ProjectWorkspace {
     private(set) var tabs: [ProjectTab] = []
-    private(set) var selectedID: UUID
+    /// Leaving a smart object tab, however it happens, writes its edits into the layer it came from.
+    private(set) var selectedID: UUID {
+        didSet {
+            guard oldValue != selectedID, let left = tabs.first(where: { $0.id == oldValue }), left.smartObjectSource != nil else { return }
+            applySmartObject(from: left)
+        }
+    }
     var isManaging = false
     @ObservationIgnored weak var window: NSWindow?
     @ObservationIgnored private var nextNumber = 2
@@ -59,6 +71,55 @@ final class ProjectWorkspace {
         selectedID = id
         current.controller.window = window
         current.controller.resumeExternalChangeCheck()
+    }
+    func smartObjectTab(for layerID: UUID, in parent: UUID) -> ProjectTab? {
+        tabs.first { $0.smartObjectSource?.tabID == parent && $0.smartObjectSource?.layerID == layerID }
+    }
+    /// Opens the current tab's smart object layer in a tab of its own, or brings its tab forward.
+    func openSmartObject(layerID: UUID) {
+        guard canSwitch, let layer = current.session.document?.layers.first(where: { $0.id == layerID }),
+              let smart = layer.liveSmartObject else { return }
+        let parent = current
+        if let existing = smartObjectTab(for: layerID, in: parent.id) { select(existing.id); return }
+        parent.session.commitTransform()
+        let tab = addTab(reuseEmpty: false)
+        tab.smartObjectSource = (parent.id, layerID)
+        tab.smartObjectName = layer.name
+        tab.smartObjectBaseline = smart.content
+        tab.session.installSmartObject(smart.content)
+    }
+    /// The tabs a smart object tab was opened from, nearest first.
+    private func smartObjectAncestors(of tab: ProjectTab) -> [ProjectTab] {
+        var chain: [ProjectTab] = []
+        var next = tab
+        while let source = next.smartObjectSource, let parent = tabs.first(where: { $0.id == source.tabID }) { chain.append(parent); next = parent }
+        return chain
+    }
+    /// Deeper smart objects go first, so each level has its edits when the one above it is flattened.
+    private func applySmartObjects(innermostFirst nested: [ProjectTab]) {
+        for tab in nested.sorted(by: { smartObjectAncestors(of: $0).count > smartObjectAncestors(of: $1).count }) { applySmartObject(from: tab) }
+    }
+    /// Writes a smart object tab's edits into its layer in the parent tab, as one undo step there. Nothing happens
+    /// when nothing changed, or when the parent or the layer is gone (deleted, undone, painted on).
+    func applySmartObject(from tab: ProjectTab) {
+        guard let source = tab.smartObjectSource,
+              let parent = tabs.first(where: { $0.id == source.tabID }),
+              let index = parent.session.document?.layers.firstIndex(where: { $0.id == source.layerID }),
+              let layer = parent.session.document?.layers[index], let smart = layer.liveSmartObject,
+              let result = tab.session.flattenedSmartObjectContent(from: tab.smartObjectBaseline ?? smart.content) else { return }
+        // The layer's footprint grows or shrinks with the contents' pixel size, around its center, so rotation holds.
+        var transform = layer.transform
+        let center = transform.center
+        transform.size = CGSize(width: transform.size.width * CGFloat(result.content.width) / CGFloat(smart.content.width),
+                                height: transform.size.height * CGFloat(result.content.height) / CGFloat(smart.content.height))
+        transform.origin = CGPoint(x: center.x - transform.size.width / 2, y: center.y - transform.size.height / 2)
+        tab.smartObjectBaseline = result.content
+        parent.session.finishOpacityEdit()
+        parent.session.beginEdit("Update Smart Object")
+        parent.session.document?.layers[index].asset = result.image
+        parent.session.document?.layers[index].transform = transform
+        parent.session.document?.layers[index].smartObject = LayerSmartObject(content: result.content, image: result.image.image)
+        parent.session.endEdit()
     }
     func newCanvas() {
         guard canSwitch else { return }
@@ -100,15 +161,23 @@ final class ProjectWorkspace {
         guard canSwitch, let tab = tabs.first(where: { $0.id == id }) else { return }
         isManaging = true
         defer { isManaging = false }
-        tab.controller.window = window
-        guard await tab.controller.confirmQuit() else { return }
+        // Smart objects open from this tab apply first, so its own save prompt knows about their edits.
+        applySmartObjects(innermostFirst: tabs.filter { smartObjectAncestors(of: $0).contains { $0.id == id } })
+        if tab.smartObjectSource != nil { applySmartObject(from: tab) }
+        else {
+            tab.controller.window = window
+            guard await tab.controller.confirmQuit() else { return }
+        }
         removeTab(id)
     }
+    /// Removes a tab and the smart object tabs open from it. Focus goes to the tab a smart object came from.
     func removeTab(_ id: UUID) {
         guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
-        tabs.remove(at: index)
+        let parentID = tabs[index].smartObjectSource?.tabID
+        let removed = Set(tabs.filter { $0.id == id || smartObjectAncestors(of: $0).contains { $0.id == id } }.map(\.id))
+        tabs.removeAll { removed.contains($0.id) }
         if tabs.isEmpty { _ = addTab(reuseEmpty: false) }
-        else if selectedID == id { selectedID = tabs[min(index, tabs.count-1)].id }
+        else if removed.contains(selectedID) { selectedID = tabs.first { $0.id == parentID }?.id ?? tabs[min(index, tabs.count-1)].id }
     }
     /// The order Quit (and closing the window) asks about unsaved projects: the tab on screen first,
     /// then the rest left to right, so it never jumps to another project before the one you're viewing.
@@ -123,7 +192,9 @@ final class ProjectWorkspace {
         guard finishTextEditing() else { return false }
         guard canSwitch else { return false }
         isManaging = true; defer { isManaging = false }
-        for tab in quitOrder {
+        // Smart object tabs have no file of their own: their edits go into their layers, then only real projects prompt.
+        applySmartObjects(innermostFirst: tabs.filter { $0.smartObjectSource != nil })
+        for tab in quitOrder where tab.smartObjectSource == nil {
             selectedID = tab.id; tab.controller.window = window
             guard await tab.controller.confirmQuit() else { return false }
         }

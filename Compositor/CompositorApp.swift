@@ -278,6 +278,11 @@ struct CompositorApp: App {
                             .disabled(!session.canEditLayers)
                         Button("Flip Canvas Vertical") { session.flipCanvas(horizontally: false) }
                             .disabled(!session.canEditLayers)
+                        Divider()
+                        ForEach(CanvasRotation.allCases, id: \.self) { rotation in
+                            Button(rotation.undoName) { session.rotateCanvas(rotation) }
+                                .disabled(!session.canEditLayers)
+                        }
                     }
                 }
                 CommandMenu("Filter") {

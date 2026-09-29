@@ -293,23 +293,24 @@ extension EditorSession {
     var canModifySelection: Bool { selection?.isEmpty == false && canEditSelection && lassoDraft == nil }
 
     enum SelectionAmountOperation: String {
-        case expand = "Expand", contract = "Contract", feather = "Feather"
+        case expand = "Expand", contract = "Contract", feather = "Feather", featherMask = "Feather Mask"
     }
 
     /// Menu commands ask for an amount; the tool header applies its input directly.
     func promptSelectionAmount(_ operation: SelectionAmountOperation) {
-        guard canModifySelection else { return }
+        guard operation == .featherMask ? canFeatherMask : canModifySelection else { return }
         selectionAmountOperation = operation
     }
 
     func confirmSelectionAmount(_ amount: Int) {
         guard let operation = selectionAmountOperation,
-              (1...(operation == .feather ? 250 : 500)).contains(amount) else { return }
+              (1...(operation == .expand || operation == .contract ? 500 : 250)).contains(amount) else { return }
         selectionAmountOperation = nil
         switch operation {
         case .expand: selectionExpandAmount = amount; expandSelection(by: amount)
         case .contract: selectionContractAmount = amount; contractSelection(by: amount)
         case .feather: selectionFeatherAmount = amount; featherSelection(by: amount)
+        case .featherMask: maskFeatherAmount = amount; Task { await featherMask(by: amount) }
         }
     }
 

@@ -221,6 +221,16 @@ struct NativeLayerList: NSViewRepresentable {
             deleteMaskItem.isEnabled = validateMenuItem(deleteMaskItem)
             menu.addItem(deleteMaskItem)
 
+            let invertMaskItem = NSMenuItem(title: "Invert Mask", action: #selector(invertMaskAction), keyEquivalent: "")
+            invertMaskItem.target = self
+            invertMaskItem.isEnabled = validateMenuItem(invertMaskItem)
+            menu.addItem(invertMaskItem)
+
+            let featherMaskItem = NSMenuItem(title: "Feather Mask…", action: #selector(featherMaskAction), keyEquivalent: "")
+            featherMaskItem.target = self
+            featherMaskItem.isEnabled = validateMenuItem(featherMaskItem)
+            menu.addItem(featherMaskItem)
+
             // 11. Link Mask / Unlink Mask
             let linkMaskTitle = session.activeLayer?.mask?.isLinked == false ? "Link Mask" : "Unlink Mask"
             let linkMaskItem = NSMenuItem(title: linkMaskTitle, action: #selector(toggleMaskLinkAction), keyEquivalent: "")
@@ -268,6 +278,10 @@ struct NativeLayerList: NSViewRepresentable {
                 return session.canEditMask && session.activeLayer?.mask != nil
             case #selector(deleteMaskAction):
                 return session.canEditMask && session.activeLayer?.mask != nil
+            case #selector(invertMaskAction):
+                return session.canEditMask && session.activeLayer?.mask?.isEnabled == true && !session.isProjectBusy
+            case #selector(featherMaskAction):
+                return session.canFeatherMask
             case #selector(toggleMaskLinkAction):
                 return session.canEditLayers && session.activeLayer?.mask != nil && session.activeLayer?.isGroup == false && session.activeLayer?.adjustment == nil
             case #selector(toggleVisibilityAction):
@@ -342,6 +356,16 @@ struct NativeLayerList: NSViewRepresentable {
             guard let id = session.activeLayerID else { return }
             session.selectLayerTarget(id, mask: false)
             session.deleteLayerMask()
+        }
+
+        @objc func invertMaskAction(_ sender: Any?) {
+            guard let id = session.activeLayerID else { return }
+            session.selectLayerTarget(id, mask: true)
+            Task { await session.invertPixels() }
+        }
+
+        @objc func featherMaskAction(_ sender: Any?) {
+            session.promptMaskFeather()
         }
 
         @objc func toggleMaskLinkAction(_ sender: Any?) {

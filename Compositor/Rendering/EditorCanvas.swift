@@ -1702,12 +1702,14 @@ final class CanvasView: NSView {
     /// Right-drag with a brush tool: left and right resize the brush from its size at the press, or with Shift
     /// change its hardness. The brush circle stays where the press was.
     private var brushTipDrag: (start: CGPoint, diameter: CGFloat, hardness: CGFloat, hardnessShown: Bool)?
+    private var brushTipDragMoved = false
     override func rightMouseDown(with event: NSEvent) {
         guard session.tool.isBrushTool, session.brushStroke == nil, session.warpStroke == nil, !spaceHeld else {
             super.rightMouseDown(with: event); return
         }
         let point = convert(event.locationInWindow, from: nil)
         brushTipDrag = (point, session.brushSettings.diameter, session.brushSettings.hardness, event.modifierFlags.contains(.shift))
+        brushTipDragMoved = false
         brushPointer = point
         updateBrushCursor()
     }
@@ -1715,6 +1717,7 @@ final class CanvasView: NSView {
         guard let drag = brushTipDrag else { super.rightMouseDragged(with: event); return }
         brushTipDrag?.hardnessShown = event.modifierFlags.contains(.shift)
         let dx = convert(event.locationInWindow, from: nil).x - drag.start.x
+        if abs(dx) > 3 { brushTipDragMoved = true }
         if event.modifierFlags.contains(.shift) {
             // The full range across 200 points.
             session.brushSettings.hardness = min(1, max(0, drag.hardness + dx / 200))
@@ -1729,10 +1732,11 @@ final class CanvasView: NSView {
         updateBrushCursor()
     }
     override func rightMouseUp(with event: NSEvent) {
-        guard brushTipDrag != nil else { super.rightMouseUp(with: event); return }
+        guard let drag = brushTipDrag else { super.rightMouseUp(with: event); return }
         brushTipDrag = nil
         brushPointer = convert(event.locationInWindow, from: nil)
         updateBrushCursor()
+        if !brushTipDragMoved { BrushQuickPanel.show(for: session, at: drag.start, in: self) }
     }
     override func mouseDown(with event: NSEvent) {
         session.effectSelection = nil

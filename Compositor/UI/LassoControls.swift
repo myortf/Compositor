@@ -193,11 +193,12 @@ struct SelectionAmountSheet: View {
         case .expand: amount = session.selectionExpandAmount
         case .contract: amount = session.selectionContractAmount
         case .feather: amount = session.selectionFeatherAmount
+        case .featherMask: amount = session.maskFeatherAmount
         }
         _input = State(initialValue: String(amount))
     }
 
-    private var maximum: Int { operation == .feather ? 250 : 500 }
+    private var maximum: Int { operation == .expand || operation == .contract ? 500 : 250 }
     private var amount: Int? {
         guard let value = Int(input.trimmingCharacters(in: .whitespacesAndNewlines)),
               (1...maximum).contains(value) else { return nil }

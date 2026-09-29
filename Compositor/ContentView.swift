@@ -242,7 +242,7 @@ struct ContentView: View {
         .onChange(of: session.selectionAmountOperation) { _, operation in
             if let operation {
                 selectionAmountPanel.onClose = { session.selectionAmountOperation = nil }
-                selectionAmountPanel.show(title: operation.rawValue + " Selection",
+                selectionAmountPanel.show(title: operation == .featherMask ? operation.rawValue : operation.rawValue + " Selection",
                     content: SelectionAmountSheet(session: session, operation: operation))
             } else { selectionAmountPanel.close() }
         }

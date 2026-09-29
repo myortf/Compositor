@@ -12,6 +12,8 @@ nonisolated enum FilterKind: String, CaseIterable, Sendable {
     case bloomGlow = "Bloom / Glow"
     case dither = "Dither"
     case tonalContrast = "Tonal Contrast"
+    case unsharpMask = "Unsharp Mask"
+    case highPass = "High Pass"
     case lensCorrection = "Lens Correction"
     case cameraRaw = "Camera Raw Filter"
     case removeBackground = "Remove Background"
@@ -70,6 +72,13 @@ nonisolated struct FilterSettings: Equatable, Sendable {
     /// Lens Correction's Remove Distortion, −100–100: positive straightens barrel distortion
     /// (lines bowing outward), negative straightens pincushion (lines bowing inward).
     var distortion: Double = 0
+    /// Unsharp Mask: strength in percent, blur radius in layer pixels, and how many levels a channel must differ from
+    /// the blur before it is sharpened.
+    var sharpenAmount: Double = 100
+    var sharpenRadius: Double = 1
+    var sharpenThreshold: Double = 0
+    /// High Pass's blur radius in layer pixels.
+    var highPassRadius: Double = 10
     var curves = CurvesSettings()
     var exposure = ExposureSettings()
     var gradientMap = GradientMapSettings()
@@ -109,6 +118,10 @@ nonisolated struct FilterSettings: Equatable, Sendable {
         result.tonalMidtones = clamp(tonalMidtones, -100...100, 60)
         result.tonalHighlights = clamp(tonalHighlights, -100...100, 30)
         result.distortion = clamp(distortion, -100...100, 0)
+        result.sharpenAmount = clamp(sharpenAmount, Sharpen.amountRange, 100)
+        result.sharpenRadius = clamp(sharpenRadius, Sharpen.radiusRange, 1)
+        result.sharpenThreshold = clamp(sharpenThreshold, Sharpen.thresholdRange, 0)
+        result.highPassRadius = clamp(highPassRadius, Sharpen.radiusRange, 10)
         result.refineEdges = clamp(refineEdges, 0...40, 12)
         result.matteContrast = clamp(matteContrast, 0...100, 25)
         result.shiftEdge = clamp(shiftEdge, -10...10, 0)
@@ -254,6 +267,11 @@ nonisolated enum PixelFilter {
                                   settings.tonalMidtones, settings.tonalHighlights)
             guard let result = context.makeImage() else { throw ExportError.render }
             image = result
+        case .unsharpMask:
+            image = try Sharpen.unsharpMask(job.image, amount: settings.sharpenAmount, radius: settings.sharpenRadius * job.scale,
+                                            threshold: settings.sharpenThreshold)
+        case .highPass:
+            image = try Sharpen.highPass(job.image, radius: settings.highPassRadius * job.scale)
         case .lensCorrection:
             // The warp is relative to the image's own size, so a downscaled preview bends the same way.
             let source = try BrushRaster.context(width: width, height: height, mask: false)
@@ -605,6 +623,7 @@ extension EditorSession {
             || (edit.kind == .bloomGlow && edit.settings.bloomAmount == 0)
             || (edit.kind == .tonalContrast && (edit.settings.tonalAmount == 0 ||
                 (edit.settings.tonalShadows == 0 && edit.settings.tonalMidtones == 0 && edit.settings.tonalHighlights == 0)))
+            || (edit.kind == .unsharpMask && edit.settings.sharpenAmount == 0)
             || (edit.kind == .exposure && edit.settings.exposure == ExposureSettings())
             || (edit.kind == .grain && edit.settings.grain.amount == 0)
             || (edit.kind == .cameraRaw && rendered.cameraRaw.isIdentity) { cancelFilter(); return }

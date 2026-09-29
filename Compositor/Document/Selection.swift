@@ -294,6 +294,17 @@ extension EditorSession {
 
     enum SelectionAmountOperation: String {
         case expand = "Expand", contract = "Contract", feather = "Feather", featherMask = "Feather Mask"
+        case smooth = "Smooth", border = "Border"
+
+        /// The largest amount, in pixels, the sheet and `confirmSelectionAmount` accept.
+        var maximum: Int {
+            switch self {
+            case .expand, .contract: 500
+            case .smooth: 100
+            case .border: 200
+            case .feather, .featherMask: 250
+            }
+        }
     }
 
     /// Menu commands ask for an amount; the tool header applies its input directly.
@@ -304,13 +315,15 @@ extension EditorSession {
 
     func confirmSelectionAmount(_ amount: Int) {
         guard let operation = selectionAmountOperation,
-              (1...(operation == .expand || operation == .contract ? 500 : 250)).contains(amount) else { return }
+              (1...operation.maximum).contains(amount) else { return }
         selectionAmountOperation = nil
         switch operation {
         case .expand: selectionExpandAmount = amount; expandSelection(by: amount)
         case .contract: selectionContractAmount = amount; contractSelection(by: amount)
         case .feather: selectionFeatherAmount = amount; featherSelection(by: amount)
         case .featherMask: maskFeatherAmount = amount; Task { await featherMask(by: amount) }
+        case .smooth: selectionSmoothAmount = amount; smoothSelection(by: amount)
+        case .border: selectionBorderAmount = amount; borderSelection(by: amount)
         }
     }
 
@@ -331,15 +344,66 @@ extension EditorSession {
                                        feather: min(250, softened)), name: "Feather Selection")
     }
 
+    /// Rounds jagged edges and drops specks and pinholes smaller than about `amount` pixels, as Select → Modify →
+    /// Smooth does. Coverage is blurred and cut at 50%; the canvas edges are extended outward, so a selection
+    /// touching them is not shaved back. Smoothing away everything leaves an explicit empty selection.
+    func smoothSelection(by amount: Int) {
+        guard let document, canModifySelection, let current = selection, (1...SelectionAmountOperation.smooth.maximum).contains(amount),
+              let smoothed = Self.smoothedPath(current.path, radius: CGFloat(amount), canvas: document.size) else { return }
+        setSelection(DocumentSelection(path: smoothed, antialiased: current.antialiased, feather: current.feather),
+                     name: "Smooth Selection")
+    }
+
+    /// Turns the selection into a band `amount` pixels wide along its edge. The extra pixel of an odd width falls
+    /// inside, so a band along the canvas edge keeps its full width.
+    func borderSelection(by amount: Int) {
+        guard let document, canModifySelection, let current = selection, (1...SelectionAmountOperation.border.maximum).contains(amount)
+        else { return }
+        let canvas = CGRect(origin: .zero, size: document.size)
+        let outside = CGFloat(amount / 2), inside = CGFloat(amount - amount / 2)
+        let outer = Self.resizedPath(current.path, by: outside, canvas: canvas)
+        let inner = Self.resizedPath(current.path, by: -inside, canvas: canvas)
+        setSelection(DocumentSelection(path: outer.subtracting(inner, using: .winding), antialiased: current.antialiased,
+                                       feather: current.feather), name: "Border Selection")
+    }
+
     private func resizeSelection(by delta: CGFloat, name: String) {
         guard let document, let current = selection, canModifySelection, delta != 0, abs(delta) <= 500 else { return }
-        // A band `|delta|` wide on each side of the outline, added or removed.
-        let band = current.path.copy(strokingWithWidth: abs(delta) * 2, lineCap: .round, lineJoin: .round, miterLimit: 10)
-        let result = delta > 0
-            ? current.path.union(band, using: .winding)
-                .intersection(CGPath(rect: CGRect(origin: .zero, size: document.size), transform: nil), using: .winding)
-            : current.path.subtracting(band, using: .winding)
+        let result = Self.resizedPath(current.path, by: delta, canvas: CGRect(origin: .zero, size: document.size))
         setSelection(DocumentSelection(path: result, antialiased: current.antialiased, feather: current.feather), name: name)
+    }
+
+    /// `path` grown (positive) or shrunk (negative) by `delta` pixels; grown outlines stay on the canvas.
+    private static func resizedPath(_ path: CGPath, by delta: CGFloat, canvas: CGRect) -> CGPath {
+        guard delta != 0 else { return path }
+        // A band `|delta|` wide on each side of the outline, added or removed.
+        let band = path.copy(strokingWithWidth: abs(delta) * 2, lineCap: .round, lineJoin: .round, miterLimit: 10)
+        return delta > 0
+            ? path.union(band, using: .winding).intersection(CGPath(rect: canvas, transform: nil), using: .winding)
+            : path.subtracting(band, using: .winding)
+    }
+
+    /// Nil only if the coverage cannot be rendered; an emptied selection comes back as an empty path.
+    private static func smoothedPath(_ path: CGPath, radius: CGFloat, canvas size: CGSize) -> CGPath? {
+        let sigma = radius * 0.7
+        // Work on the outline's bounds plus room for the blur, so a large canvas costs no more than the shape does.
+        let margin = ceil(sigma * 3) + 2
+        let region = path.boundingBoxOfPath.insetBy(dx: -margin, dy: -margin).integral
+            .intersection(CGRect(origin: .zero, size: size))
+        guard !region.isNull, region.width >= 1, region.height >= 1 else { return CGMutablePath() }
+        var toRegion = CGAffineTransform(translationX: -region.minX, y: -region.minY)
+        guard let local = path.copy(using: &toRegion) else { return nil }
+        let width = Int(region.width), height = Int(region.height)
+        do {
+            let hard = try DocumentSelection(path: local, antialiased: false).coverage(width: width, height: height)
+            // Clamping repeats the outermost row and column, which extends the canvas edges outward.
+            let extent = CGRect(x: 0, y: 0, width: width, height: height)
+            let blurred = CIImage(cgImage: hard).clampedToExtent().applyingGaussianBlur(sigma: sigma).cropped(to: extent)
+            let rounded = try PixelAdjust.render(blurred, width: width, height: height, isMask: true)
+            guard let traced = MaskTracing.whitePixels(in: rounded) else { return CGMutablePath() }
+            var toCanvas = CGAffineTransform(translationX: region.minX, y: region.minY)
+            return traced.copy(using: &toCanvas)
+        } catch { return nil }
     }
 
     func selectAll() {

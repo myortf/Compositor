@@ -97,6 +97,23 @@ nonisolated struct LayerAdjustment: Codable, Equatable, Sendable {
         get { motionAngle ?? 0 }
         set { motionAngle = newValue }
     }
+    /// A motion blur streaks along a line, so a quarter turn of the canvas swings it by the same amount the other
+    /// way (Core Image counts counterclockwise) and a mirror flips its slope; the angle stays within -90...90.
+    mutating func turnMotionBlur(clockwiseDegrees: Double) {
+        guard kind == .motionBlur else { return }
+        set(motionAngle: resolvedMotionAngle - clockwiseDegrees)
+    }
+
+    mutating func mirrorMotionBlur() {
+        guard kind == .motionBlur else { return }
+        set(motionAngle: -resolvedMotionAngle)
+    }
+
+    private mutating func set(motionAngle angle: Double) {
+        let wrapped = (angle + 90).truncatingRemainder(dividingBy: 180)
+        motionAngle = (wrapped < 0 ? wrapped + 180 : wrapped) - 90
+    }
+
     var resolvedMotionDistance: Double {
         get { motionDistance ?? 10 }
         set { motionDistance = newValue }

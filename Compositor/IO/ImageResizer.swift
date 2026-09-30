@@ -92,10 +92,15 @@ actor ImageResizer {
                     masks[layer.id] = try LayerMask.asset(from: image)
                 }
             }
+            var effects = layer.effects
+            if effects != nil, let source = snapshot.images[layer.id]?.image {
+                let factor = (CGFloat(width) / CGFloat(max(1, source.width)) * CGFloat(height) / CGFloat(max(1, source.height))).squareRoot()
+                effects = effects?.scaled(by: factor)
+            }
             manifest.layers.append(ProjectLayerRecord(id: layer.id, name: layer.name, isVisible: layer.isVisible,
                 transform: transform, imageFile: layer.imageFile, parentID: layer.parentID, isGroup: layer.isGroup, opacity: layer.opacity, blendMode: layer.blendMode, maskFile: layer.maskFile, maskEnabled: layer.maskEnabled, maskSourceID: layer.maskSourceID, adjustment: layer.adjustment,
                 maskPlacement: layer.maskPlacement.map { $0.placing($0.unitToDocument.concatenating(CGAffineTransform(scaleX: sx, y: sy))) },
-                maskLinked: layer.maskLinked))
+                maskLinked: layer.maskLinked, effects: effects))
         }
         return ProjectSnapshot(manifest: manifest, images: images, masks: masks)
     }

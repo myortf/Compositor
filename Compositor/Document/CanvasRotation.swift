@@ -84,6 +84,7 @@ extension EditorSession {
             guides: document.guides.map { $0.rotated(rotation, in: canvas) })
         for index in turned.layers.indices {
             turned.layers[index].transform = turned.layers[index].transform.rotated(rotation, in: canvas)
+            turned.layers[index].adjustment?.turnMotionBlur(clockwiseDegrees: Double(rotation.degrees))
             if let placement = turned.layers[index].mask?.placement {
                 turned.layers[index].mask?.placement = placement.rotated(rotation, in: canvas)
             }

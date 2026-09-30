@@ -62,6 +62,7 @@ extension EditorSession {
         for index in document.layers.indices {
             let layer = document.layers[index]
             self.document?.layers[index].transform = layer.transform.mirrored(horizontally: horizontally, across: axis)
+            self.document?.layers[index].adjustment?.mirrorMotionBlur()
             if let placement = layer.mask?.placement {
                 self.document?.layers[index].mask?.placement = placement.mirrored(horizontally: horizontally, across: axis)
             }

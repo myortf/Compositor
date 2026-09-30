@@ -137,6 +137,19 @@ nonisolated struct LayerEffects: Codable, Equatable, Sendable {
             && (colorOverlay?.isValid ?? true) && (innerShadow?.isValid ?? true)
             && (outerGlow?.isValid ?? true) && (innerGlow?.isValid ?? true)
     }
+    /// The same effects for pixels `factor` times as many across: every size, distance and blur grows with them.
+    func scaled(by factor: CGFloat) -> LayerEffects {
+        var result = self
+        result.stroke?.size = min(StrokeEffect.maxSize, size(stroke?.size, factor))
+        result.shadow?.distance = min(5000, size(shadow?.distance, factor))
+        result.shadow?.blur = min(500, size(shadow?.blur, factor))
+        result.innerShadow?.distance = min(5000, size(innerShadow?.distance, factor))
+        result.innerShadow?.blur = min(500, size(innerShadow?.blur, factor))
+        result.outerGlow?.size = min(500, size(outerGlow?.size, factor))
+        result.innerGlow?.size = min(500, size(innerGlow?.size, factor))
+        return result
+    }
+    private func size(_ value: CGFloat?, _ factor: CGFloat) -> CGFloat { (value ?? 0) * factor }
     var kinds: [LayerEffectKind] { LayerEffectKind.allCases.filter { contains($0) } }
     func contains(_ kind: LayerEffectKind) -> Bool {
         switch kind {

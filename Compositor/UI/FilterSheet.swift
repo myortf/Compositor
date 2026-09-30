@@ -144,6 +144,8 @@ struct FilterSheet: View {
                 control("Radius", \.highPassRadius, range: Sharpen.radiusRange, unit: "px", decimals: 1, logarithmic: true)
                 Text("Keeps only the edges over mid-gray. Set the layer's blend mode to Overlay or Soft Light to sharpen with it.")
                     .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            case .colorTransfer:
+                colorTransferControls
             case .lensCorrection:
                 control("Remove Distortion", \.distortion, range: -100...100, unit: "", decimals: 0, logarithmic: false)
                 Text("Positive straightens lines that bow outward (barrel); negative, lines that bow inward (pincushion).")
@@ -172,7 +174,8 @@ struct FilterSheet: View {
                 }
                 Button("OK") { Task { await session.commitFilter() } }
                     .configuredNativeShortcut(.return).buttonStyle(.borderedProminent)
-                    .disabled(edit?.kind.isAutomatic == true && (edit?.preparing == true || edit?.previewError != nil))
+                    .disabled((edit?.kind.isAutomatic == true && (edit?.preparing == true || edit?.previewError != nil))
+                              || (edit?.kind == .colorTransfer && edit?.colorReference == nil))
             }
         }
         .onPreferenceChange(LabelWidthKey.self) { labelWidth = max(60, $0) }
@@ -188,6 +191,44 @@ struct FilterSheet: View {
             session.previewVignetteColor()
             session.previewDitherColor()
         }
+    }
+
+    @ViewBuilder private var colorTransferControls: some View {
+        let transfer = settings.colorTransfer
+        HStack(spacing: 12) {
+            Group {
+                if let reference = edit?.colorReference {
+                    Image(decorative: reference.thumbnail, scale: 1).resizable().scaledToFit()
+                } else {
+                    Image(systemName: "photo").font(.title).foregroundStyle(.secondary)
+                }
+            }
+            .frame(width: 72, height: 72)
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .accessibilityLabel("Reference image")
+            VStack(alignment: .leading, spacing: 6) {
+                Text(edit?.colorReference?.name ?? "No reference chosen").lineLimit(1).truncationMode(.middle)
+                HStack {
+                    Button("Choose Image…") { session.chooseColorReferenceFile() }
+                    Menu("Layer") {
+                        ForEach(session.colorReferenceLayers, id: \.id) { layer in
+                            Button(layer.name) { session.useColorReferenceLayer(layer.id) }
+                        }
+                    }
+                    .fixedSize().disabled(session.colorReferenceLayers.isEmpty)
+                }
+            }
+            Spacer()
+        }
+        Picker("Method", selection: Binding(get: { transfer.method }, set: { new in update { $0.colorTransfer.method = new } })) {
+            ForEach(ColorTransferMethod.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+        }
+        .help("Reinhard matches each channel's average and spread; Histogram Matching matches every tone; Monge-Kantorovich matches how the colors vary together")
+        control("Strength", \.colorTransfer.strength, range: ColorTransferSettings.strengthRange, unit: "%", decimals: 0, logarithmic: false)
+        Toggle("Preserve Luminance", isOn: flag(\.colorTransfer.preserveLuminance))
+            .help("Keep each pixel's lightness and move only its color")
+        Toggle("Match Regions", isOn: flag(\.colorTransfer.matchRegions))
+            .help("Match sky to sky, people to people and foliage to foliage where both images have them")
     }
 
     @ViewBuilder private var ditherControls: some View {

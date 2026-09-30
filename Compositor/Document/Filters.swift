@@ -14,6 +14,7 @@ nonisolated enum FilterKind: String, CaseIterable, Sendable {
     case tonalContrast = "Tonal Contrast"
     case unsharpMask = "Unsharp Mask"
     case highPass = "High Pass"
+    case colorTransfer = "Color Transfer"
     case lensCorrection = "Lens Correction"
     case cameraRaw = "Camera Raw Filter"
     case removeBackground = "Remove Background"
@@ -79,6 +80,7 @@ nonisolated struct FilterSettings: Equatable, Sendable {
     var sharpenThreshold: Double = 0
     /// High Pass's blur radius in layer pixels.
     var highPassRadius: Double = 10
+    var colorTransfer = ColorTransferSettings()
     var curves = CurvesSettings()
     var exposure = ExposureSettings()
     var gradientMap = GradientMapSettings()
@@ -125,6 +127,7 @@ nonisolated struct FilterSettings: Equatable, Sendable {
         result.refineEdges = clamp(refineEdges, 0...40, 12)
         result.matteContrast = clamp(matteContrast, 0...100, 25)
         result.shiftEdge = clamp(shiftEdge, -10...10, 0)
+        result.colorTransfer = colorTransfer.normalized
         result.exposure = exposure.normalized
         result.gradientMap = gradientMap.normalized
         result.grain = grain.normalized
@@ -158,6 +161,8 @@ nonisolated struct FilterJob: @unchecked Sendable {
     var visualizesPointColor = -1
     /// Option-drag on Sharpening Masking. Preview only.
     var showsSharpenMask = false
+    /// Color Transfer's reference, already shrunk for its statistics.
+    var reference: CGImage? = nil
 }
 
 nonisolated enum PixelFilter {
@@ -272,6 +277,9 @@ nonisolated enum PixelFilter {
                                             threshold: settings.sharpenThreshold)
         case .highPass:
             image = try Sharpen.highPass(job.image, radius: settings.highPassRadius * job.scale)
+        case .colorTransfer:
+            guard let reference = job.reference else { return job.image }
+            image = try ColorTransfer.apply(job.image, reference: reference, settings: settings.colorTransfer)
         case .lensCorrection:
             // The warp is relative to the image's own size, so a downscaled preview bends the same way.
             let source = try BrushRaster.context(width: width, height: height, mask: false)
@@ -309,6 +317,8 @@ final class FilterEdit {
     var preview = true
     var committing = false
     var previewError: String?
+    /// Color Transfer's reference, chosen in the panel.
+    var colorReference: ColorReference?
     var preparing = false
     /// Add Noise's grain, fixed while the panel is open so changing Amount doesn't reshuffle it.
     let seed = UInt32.random(in: .min ... .max)
@@ -486,6 +496,7 @@ final class FilterEdit {
         job.showsHighlightClipping = showsHighlightClipping
         job.visualizesPointColor = pointColorVisualizeIndex
         job.showsSharpenMask = cameraRawSharpenMask
+        job.reference = colorReference?.image
         return job
     }
 }
@@ -624,6 +635,7 @@ extension EditorSession {
             || (edit.kind == .tonalContrast && (edit.settings.tonalAmount == 0 ||
                 (edit.settings.tonalShadows == 0 && edit.settings.tonalMidtones == 0 && edit.settings.tonalHighlights == 0)))
             || (edit.kind == .unsharpMask && edit.settings.sharpenAmount == 0)
+            || (edit.kind == .colorTransfer && (edit.colorReference == nil || edit.settings.colorTransfer.strength == 0))
             || (edit.kind == .exposure && edit.settings.exposure == ExposureSettings())
             || (edit.kind == .grain && edit.settings.grain.amount == 0)
             || (edit.kind == .cameraRaw && rendered.cameraRaw.isIdentity) { cancelFilter(); return }
@@ -639,6 +651,7 @@ extension EditorSession {
         var job = FilterJob(kind: edit.kind, image: edit.grownImage ?? edit.original.image, settings: edit.renderSettings(), scale: 1,
                             selection: edit.selection, mapping: edit.mapping, seed: edit.seed)
         job.canvas = edit.canvas
+        job.reference = edit.colorReference?.image
         let cached = edit.kind.isAutomatic && edit.preparedSettings == edit.settings ? edit.preparedPreview : nil
         do {
             let grown = edit.grownTransform

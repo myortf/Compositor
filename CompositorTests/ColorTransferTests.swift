@@ -334,6 +334,7 @@ struct ColorTransferTests {
         session.filterEdit?.colorReference = try ColorReference(ImportedImage(image: reference, thumbnail: reference, name: "Warm"))
         var settings = session.filterEdit?.settings ?? FilterSettings()
         settings.colorTransfer.matchRegions = false
+        settings.colorTransfer.asNewLayer = false
         session.updateFilter(settings, preview: true)
         await session.commitFilter()
         #expect(session.filterEdit == nil && session.history.undoCount == count + 1)
@@ -350,5 +351,89 @@ struct ColorTransferTests {
         session.beginFilter(.colorTransfer)
         #expect(session.colorReferenceLayers.map(\.name).contains("Photo"))
         #expect(!session.colorReferenceLayers.contains { $0.id == session.activeLayer?.id })
+    }
+
+    // MARK: Result as new layer
+
+    private func transferred(size: (Int, Int), newLayer: Bool, selection: DocumentSelection? = nil, mask: Bool = false,
+                             transform: ((inout LayerTransform) -> Void)? = nil)
+        async throws -> (session: EditorSession, source: CGImage, originalID: UUID, undoCount: Int) {
+        let session = EditorSession()
+        session.createDocument(width: size.0, height: size.1)
+        let image = try gradient(size.0, size.1)
+        session.insert(ImportedImage(image: image, thumbnail: image, name: "Photo"))
+        let originalID = try #require(session.activeLayerID)
+        if mask {
+            session.addLayerMask()
+            session.activeLayerID = originalID
+            session.isMaskSelected = false
+        }
+        if let transform, let index = session.document?.layers.firstIndex(where: { $0.id == originalID }) {
+            transform(&session.document!.layers[index].transform)
+        }
+        session.document?.selection = selection
+        session.beginFilter(.colorTransfer)
+        let reference = try solid(20, 20, 0.9, 0.3, 0.1)
+        session.filterEdit?.colorReference = try ColorReference(ImportedImage(image: reference, thumbnail: reference, name: "Warm"))
+        var settings = session.filterEdit?.settings ?? FilterSettings()
+        settings.colorTransfer.matchRegions = false
+        settings.colorTransfer.asNewLayer = newLayer
+        session.updateFilter(settings, preview: true)
+        let count = session.history.undoCount
+        await session.commitFilter()
+        return (session, image, originalID, count)
+    }
+
+    @Test(arguments: sizes) func resultAsNewLayerLeavesTheOriginalAndAddsOneAbove(size: (Int, Int)) async throws {
+        let before = try await transferred(size: size, newLayer: false)
+        let expected = try pixels(try #require(before.session.activeLayer?.asset?.image))
+        let (session, source, originalID, count) = try await transferred(size: size, newLayer: true)
+        let layers = try #require(session.document?.layers)
+        #expect(layers.count == 2 && session.history.undoCount == count + 1)
+        let original = try #require(layers.first { $0.id == originalID })
+        #expect(layers.firstIndex { $0.id == originalID } == 0)
+        #expect(original.asset?.image === source && original.isVisible)
+        let made = layers[1]
+        #expect(session.activeLayerID == made.id)
+        #expect(made.name == "Photo – Color Transfer" && made.opacity == 1 && made.blendMode == .normal)
+        #expect(made.transform == original.transform)
+        let result = try pixels(try #require(made.asset?.image))
+        #expect(result == expected)
+        #expect(result != (try pixels(source)))
+        session.undo()
+        #expect(session.document?.layers.count == 1 && session.activeLayerID == originalID)
+    }
+
+    @Test func withTheCheckboxOffTheActiveLayerIsReplaced() async throws {
+        let (session, source, originalID, count) = try await transferred(size: (30, 20), newLayer: false)
+        #expect(session.document?.layers.count == 1 && session.activeLayerID == originalID)
+        #expect(session.history.undoCount == count + 1)
+        #expect(session.activeLayer?.asset?.image !== source)
+    }
+
+    @Test func newLayerKeepsScaleRotationAndFlips() async throws {
+        let (session, _, originalID, _) = try await transferred(size: (37, 53), newLayer: true) {
+            $0.rotation = 30; $0.flipX = true; $0.size = CGSize(width: $0.size.width * 0.5, height: $0.size.height * 0.5)
+        }
+        let layers = try #require(session.document?.layers)
+        let original = try #require(layers.first { $0.id == originalID })
+        #expect(layers.count == 2 && layers[1].transform == original.transform && original.transform.rotation == 30)
+    }
+
+    @Test func aSelectionColorsOnlyTheSelectedArea() async throws {
+        let selection = DocumentSelection(path: CGPath(rect: CGRect(x: 0, y: 0, width: 15, height: 20), transform: nil), antialiased: false)
+        let (session, _, _, _) = try await transferred(size: (30, 20), newLayer: true, selection: selection)
+        let made = try pixels(try #require(session.activeLayer?.asset?.image))
+        func alpha(_ x: Int, _ y: Int) -> UInt8 { made[(y * 30 + x) * 4 + 3] }
+        #expect(alpha(5, 10) == 255)
+        #expect(alpha(25, 10) == 0)
+        #expect(session.document?.selection != nil)
+    }
+
+    @Test func theSourceLayersMaskIsCopiedOver() async throws {
+        let (session, _, originalID, _) = try await transferred(size: (20, 30), newLayer: true, mask: true)
+        let layers = try #require(session.document?.layers)
+        let original = try #require(layers.first { $0.id == originalID })
+        #expect(original.mask != nil && layers.count == 2 && layers[1].mask == original.mask)
     }
 }

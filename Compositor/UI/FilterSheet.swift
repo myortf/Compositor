@@ -229,6 +229,8 @@ struct FilterSheet: View {
             .help("Keep each pixel's lightness and move only its color")
         Toggle("Match Regions", isOn: flag(\.colorTransfer.matchRegions))
             .help("Match sky to sky, people to people and foliage to foliage where both images have them")
+        Toggle("Result as new layer", isOn: flag(\.colorTransfer.asNewLayer))
+            .help("Keep the layer as it is and put the transferred colors on a new layer above it")
     }
 
     @ViewBuilder private var ditherControls: some View {

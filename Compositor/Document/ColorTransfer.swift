@@ -24,6 +24,8 @@ nonisolated struct ColorTransferSettings: Equatable, Sendable {
     var preserveLuminance = false
     /// Matches like with like (sky to sky, people to people) instead of the images as wholes.
     var matchRegions = true
+    /// Puts the result on a new layer above the active one instead of replacing its pixels.
+    var asNewLayer = true
     var normalized: Self {
         var result = self
         result.strength = strength.isFinite ? min(100, max(0, strength)) : 100

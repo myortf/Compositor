@@ -652,6 +652,10 @@ extension EditorSession {
                             selection: edit.selection, mapping: edit.mapping, seed: edit.seed)
         job.canvas = edit.canvas
         job.reference = edit.colorReference?.image
+        if edit.kind == .colorTransfer && edit.settings.colorTransfer.asNewLayer {
+            await commitColorTransferLayer(edit, job: job)
+            return
+        }
         let cached = edit.kind.isAutomatic && edit.preparedSettings == edit.settings ? edit.preparedPreview : nil
         do {
             let grown = edit.grownTransform
@@ -686,6 +690,37 @@ extension EditorSession {
                 transform: made.transform ?? current.transform, parentID: current.parentID, isGroup: false,
                 opacity: current.opacity, blendMode: current.blendMode, mask: mask, maskSourceID: current.maskSourceID,
                 effects: current.effects)
+            endEdit()
+        } catch { brushError = error.localizedDescription }
+    }
+
+    /// Color Transfer as a new layer just above the active one, same place and mask, leaving the original untouched.
+    /// With a selection, the result covers only the selected part; elsewhere the new layer is clear.
+    private func commitColorTransferLayer(_ edit: FilterEdit, job full: FilterJob) async {
+        let selection = edit.selection, mapping = edit.mapping
+        let job = FilterJob(kind: full.kind, image: full.image, settings: full.settings, scale: 1, selection: nil, mapping: mapping,
+                            seed: full.seed, reference: full.reference)
+        do {
+            let asset = try await Task.detached(priority: .userInitiated) { () -> ImportedImage in
+                var image = try PixelFilter.run(job)
+                if let selection {
+                    let clear = try BrushRaster.context(width: image.width, height: image.height, mask: false)
+                    guard let blank = clear.makeImage() else { throw ExportError.render }
+                    image = try PixelAdjust.blend(image, over: blank, through: selection, pixelToDocument: mapping, isMask: false)
+                }
+                return ImportedImage(image: image, thumbnail: try PixelAdjust.thumbnail(of: image), name: job.kind.rawValue)
+            }.value
+            guard let index = document?.layers.firstIndex(where: { $0.id == edit.layerID }),
+                  let current = document?.layers[index], current.asset?.image === edit.original.image,
+                  current.transform == edit.transform else { return }
+            let layer = ImageLayer(id: UUID(), asset: asset, name: current.name + " – " + edit.kind.rawValue, isVisible: true,
+                                   transform: current.transform, parentID: current.parentID, isGroup: false,
+                                   opacity: 1, blendMode: .normal, mask: current.mask, maskSourceID: current.maskSourceID)
+            finishOpacityEdit()
+            beginEdit(edit.kind.rawValue)
+            document?.layers.insert(layer, at: index + 1)
+            activeLayerID = layer.id
+            selectedLayerIDs = [layer.id]
             endEdit()
         } catch { brushError = error.localizedDescription }
     }
